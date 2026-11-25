@@ -26,14 +26,19 @@ export interface DocRecord {
   status: ReadStatus;
   /** false for metadata-only entries (e.g. imported from BibTeX / DOI without open-access PDF) */
   hasPdf: boolean;
+  /** Soft-delete timestamp (ms). Present when the item is in Trash. */
+  deletedAt?: number;
   updatedAt: number;
 }
 
 export interface Collection {
   id: string;
   name: string;
+  /** Optional parent collection id for nested Zotero-style folders. */
+  parentId?: string | null;
   order: number;
   createdAt: number;
+  updatedAt?: number;
 }
 
 /** Plain text of each page, for library-wide full-text search. */

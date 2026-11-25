@@ -1,6 +1,6 @@
 import { useLiveQuery } from 'dexie-react-hooks';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { db, deleteDocument, type DocRecord, type ReadStatus } from '../../db/db';
+import { db, deleteDocument, type Collection, type DocRecord, type ReadStatus } from '../../db/db';
 import { formatCitation } from '../../library/citation';
 import { toBibTeXLibrary } from '../../library/bibtex';
 import { authorName, authorsShort, STATUS_LABEL } from '../../library/format';
@@ -9,25 +9,34 @@ import {
   addToCollection,
   createCollection,
   deleteCollection,
+  emptyTrash,
+  findDuplicateGroups,
+  flattenCollectionTree,
+  getDescendantCollectionIds,
   importPdfFile,
   indexAll,
+  moveCollection,
   removeFromCollection,
+  renameCollection,
   renameTag,
+  restoreDocs,
   searchFullText,
   setStarred,
   setStatus,
+  trashDocs,
   type TextHit,
 } from '../../library/service';
 import { openDocTab, openSettings } from '../../lib/nav';
 import { download } from '../../services/export';
-import { useLibrary, type LibraryView, type SortKey } from '../../store/library';
-import { useSettings } from '../../store/settings';
+import { useLibrary, type LibraryView, type SortKey, type StatusFilter } from '../../store/library';
+import { TAG_COLOR_HEX, TAG_COLORS, useSettings } from '../../store/settings';
 import { useTabs } from '../../store/tabs';
 import { Icon, type IconName } from '../Icon';
 import { DocDetail } from './DocDetail';
 import { ImportDialog } from './ImportDialog';
 
 const DRAG_TYPE = 'application/x-paperbridge-docs';
+const COL_DRAG_TYPE = 'application/x-paperbridge-col';
 const SIDE_WIDTH_KEY = 'paperbridge.libSideWidth';
 
 function loadSideWidth() {
@@ -37,28 +46,11 @@ function loadSideWidth() {
   } catch {
     /* ignore */
   }
-  return 228;
+  return 236;
 }
 
-function matchesView(d: DocRecord, v: LibraryView): boolean {
-  switch (v.kind) {
-    case 'starred':
-      return d.starred;
-    case 'unread':
-    case 'reading':
-    case 'done':
-      return d.status === v.kind;
-    case 'recent':
-      return Date.now() - d.addedAt < 14 * 86400_000;
-    case 'nopdf':
-      return !d.hasPdf;
-    case 'collection':
-      return !!v.id && d.collectionIds.includes(v.id);
-    case 'tag':
-      return !!v.id && d.tags.includes(v.id);
-    default:
-      return true;
-  }
+function isRecentDoc(d: DocRecord): boolean {
+  return Date.now() - Math.max(d.lastOpenedAt || 0, d.addedAt) < 14 * 86400_000;
 }
 
 function matchesQuery(d: DocRecord, q: string): boolean {
@@ -84,6 +76,8 @@ const sorters: Record<SortKey, (a: DocRecord, b: DocRecord) => number> = {
 
 export function LibraryPage() {
   const docs = useLiveQuery(() => db.docs.toArray(), []);
+  const collections = useLiveQuery(() => db.collections.orderBy('order').toArray(), []);
+  const notes = useLiveQuery(() => db.notes.toArray(), []);
   const lib = useLibrary();
   const openTabs = useTabs((s) => s.tabs);
   const [importOpen, setImportOpen] = useState(false);
@@ -94,6 +88,16 @@ export function LibraryPage() {
   const [ctxMenu, setCtxMenu] = useState<{ doc: DocRecord; x: number; y: number } | null>(null);
   const hasProvider = useSettings((s) => s.providers.length > 0);
   const openDocIds = useMemo(() => new Set(openTabs.map((t) => t.docId)), [openTabs]);
+  const docsWithNotes = useMemo(() => new Set((notes ?? []).map((n) => n.docId)), [notes]);
+
+  const activeDocs = useMemo(() => (docs ?? []).filter((d) => !d.deletedAt), [docs]);
+  const trashedDocs = useMemo(() => (docs ?? []).filter((d) => !!d.deletedAt), [docs]);
+  const dupGroups = useMemo(() => findDuplicateGroups(activeDocs), [activeDocs]);
+  const dupGroupIndex = useMemo(() => {
+    const m = new Map<string, number>();
+    dupGroups.forEach((g, idx) => g.forEach((d) => m.set(d.id, idx + 1)));
+    return m;
+  }, [dupGroups]);
 
   useEffect(() => {
     if (!ctxMenu) return;
@@ -131,15 +135,58 @@ export function LibraryPage() {
     setIndexing('');
   };
 
+  const isTrash = lib.view.kind === 'trash';
   const activeHits = lib.fullText && q.length >= 2 ? hits : null;
+
+  // Base set of docs in the currently selected sidebar view (before stackable filter strip)
+  const viewBase = useMemo(() => {
+    const v = lib.view;
+    if (v.kind === 'trash') return trashedDocs;
+    if (v.kind === 'recent') return activeDocs.filter(isRecentDoc);
+    if (v.kind === 'unfiled') return activeDocs.filter((d) => d.collectionIds.length === 0);
+    if (v.kind === 'duplicates') return activeDocs.filter((d) => dupGroupIndex.has(d.id));
+    if (v.kind === 'collection' && v.id) {
+      const ids = getDescendantCollectionIds(collections ?? [], v.id);
+      return activeDocs.filter((d) => d.collectionIds.some((c) => ids.has(c)));
+    }
+    if (v.kind === 'tag' && v.id) return activeDocs.filter((d) => d.tags.includes(v.id!));
+    return activeDocs;
+  }, [activeDocs, trashedDocs, lib.view, collections, dupGroupIndex]);
+
+  const hasFilters = !isTrash && (lib.statusFilter !== 'all' || lib.onlyStarred || lib.onlyWithNotes || lib.onlyNoPdf);
+
   const shown = useMemo(() => {
-    const hits = activeHits;
-    if (!docs) return [];
-    const list = docs.filter((d) => matchesView(d, lib.view) && (matchesQuery(d, q) || !!hits?.get(d.id)?.length));
-    list.sort(sorters[lib.sort]);
-    if (lib.sortDesc) list.reverse();
+    let list = viewBase.filter((d) => {
+      if (!isTrash) {
+        if (lib.statusFilter !== 'all' && d.status !== lib.statusFilter) return false;
+        if (lib.onlyStarred && !d.starred) return false;
+        if (lib.onlyWithNotes && !docsWithNotes.has(d.id)) return false;
+        if (lib.onlyNoPdf && d.hasPdf) return false;
+      }
+      return matchesQuery(d, q) || !!activeHits?.get(d.id)?.length;
+    });
+    if (lib.view.kind === 'duplicates') {
+      list = [...list].sort((a, b) => (dupGroupIndex.get(a.id) ?? 0) - (dupGroupIndex.get(b.id) ?? 0) || a.addedAt - b.addedAt);
+    } else {
+      list = [...list].sort(sorters[lib.sort]);
+      if (lib.sortDesc) list.reverse();
+    }
     return list;
-  }, [docs, lib.view, q, activeHits, lib.sort, lib.sortDesc]);
+  }, [
+    viewBase,
+    isTrash,
+    lib.statusFilter,
+    lib.onlyStarred,
+    lib.onlyWithNotes,
+    lib.onlyNoPdf,
+    docsWithNotes,
+    q,
+    activeHits,
+    lib.view.kind,
+    dupGroupIndex,
+    lib.sort,
+    lib.sortDesc,
+  ]);
 
   const selected = docs?.find((d) => d.id === lib.selectedId) ?? null;
 
@@ -163,6 +210,25 @@ export function LibraryPage() {
   const allShownChecked = shown.length > 0 && shown.every((d) => lib.checked.includes(d.id));
   const sortArrow = (k: SortKey) => (lib.sort === k ? (lib.sortDesc ? ' ↓' : ' ↑') : '');
 
+  // Counts for stackable filter pills inside the current view
+  const filterCounts = useMemo(() => {
+    let unread = 0;
+    let reading = 0;
+    let done = 0;
+    let starred = 0;
+    let withNotes = 0;
+    let noPdf = 0;
+    for (const d of viewBase) {
+      if (d.status === 'unread') unread++;
+      else if (d.status === 'reading') reading++;
+      else if (d.status === 'done') done++;
+      if (d.starred) starred++;
+      if (docsWithNotes.has(d.id)) withNotes++;
+      if (!d.hasPdf) noPdf++;
+    }
+    return { unread, reading, done, starred, withNotes, noPdf };
+  }, [viewBase, docsWithNotes]);
+
   return (
     <div className="lib">
       {!hasProvider && (
@@ -179,7 +245,12 @@ export function LibraryPage() {
         </div>
       )}
       <div className="lib-body">
-        <Sidebar docs={docs ?? []} />
+        <Sidebar
+          activeDocs={activeDocs}
+          trashedCount={trashedDocs.length}
+          dupCount={dupGroupIndex.size}
+          collections={collections ?? []}
+        />
         <main
           className={`lib-main${dropOver ? ' drop-over' : ''}`}
           onDragOver={(e) => {
@@ -201,7 +272,7 @@ export function LibraryPage() {
             <button className="btn sm primary" onClick={() => setImportOpen(true)} title="导入 PDF / DOI / arXiv / BibTeX">
               <Icon name="plus" size={14} /> 导入
             </button>
-            <MobileViewSelect docs={docs ?? []} />
+            <MobileViewSelect activeDocs={activeDocs} collections={collections ?? []} trashedCount={trashedDocs.length} dupCount={dupGroupIndex.size} />
             <div className="view-switch hide-sm" role="group" aria-label="列表样式">
               <button
                 className={lib.layout === 'table' ? 'active' : ''}
@@ -252,12 +323,106 @@ export function LibraryPage() {
             </span>
           </div>
 
+          {/* Stackable inline filter bar (works inside ANY collection / tag / view!) */}
+          {!isTrash && (
+            <div className="filter-strip">
+              <div className="filter-group" role="group" aria-label="阅读状态筛选">
+                {(
+                  [
+                    ['all', '全部', viewBase.length],
+                    ['unread', '未读', filterCounts.unread],
+                    ['reading', '在读', filterCounts.reading],
+                    ['done', '已读', filterCounts.done],
+                  ] as [StatusFilter, string, number][]
+                ).map(([k, label, n]) => (
+                  <button
+                    key={k}
+                    className={`filter-pill${lib.statusFilter === k ? ' active' : ''}`}
+                    onClick={() => lib.setStatusFilter(k)}
+                  >
+                    {label}
+                    {k !== 'all' && n > 0 && <span className="filter-n">{n}</span>}
+                  </button>
+                ))}
+              </div>
+              <span className="filter-sep" />
+              <button
+                className={`filter-pill${lib.onlyStarred ? ' active' : ''}`}
+                onClick={lib.toggleOnlyStarred}
+                title="仅显示星标文献"
+              >
+                ★ 星标{filterCounts.starred > 0 && <span className="filter-n">{filterCounts.starred}</span>}
+              </button>
+              <button
+                className={`filter-pill${lib.onlyWithNotes ? ' active' : ''}`}
+                onClick={lib.toggleOnlyWithNotes}
+                title="仅显示有高亮或批注的文献"
+              >
+                有笔记{filterCounts.withNotes > 0 && <span className="filter-n">{filterCounts.withNotes}</span>}
+              </button>
+              {filterCounts.noPdf > 0 && (
+                <button
+                  className={`filter-pill${lib.onlyNoPdf ? ' active' : ''}`}
+                  onClick={lib.toggleOnlyNoPdf}
+                  title="仅显示缺少 PDF 附件的题录条目"
+                >
+                  无 PDF<span className="filter-n">{filterCounts.noPdf}</span>
+                </button>
+              )}
+              <div className="spacer" />
+              {hasFilters && (
+                <button className="btn ghost sm" style={{ height: 22, fontSize: 11.5 }} onClick={lib.clearFilters}>
+                  重置筛选
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* Trash banner */}
+          {isTrash && (
+            <div className="trash-banner">
+              <Icon name="trash" size={14} />
+              <span>
+                回收站（{trashedDocs.length} 篇）— 这里的文献可随时还原，清空后才会永久删除 PDF、笔记和翻译缓存。
+              </span>
+              <div className="spacer" />
+              {trashedDocs.length > 0 && (
+                <>
+                  <button className="btn sm" onClick={() => void restoreDocs(trashedDocs.map((d) => d.id))}>
+                    全部还原
+                  </button>
+                  <button
+                    className="btn sm danger"
+                    onClick={async () => {
+                      if (!confirm(`永久清空回收站中的 ${trashedDocs.length} 篇文献？此操作不可撤销。`)) return;
+                      await emptyTrash();
+                      lib.select(null);
+                      lib.setChecked([]);
+                    }}
+                  >
+                    清空回收站
+                  </button>
+                </>
+              )}
+            </div>
+          )}
+
+          {/* Duplicates info banner */}
+          {lib.view.kind === 'duplicates' && dupGroups.length > 0 && (
+            <div className="trash-banner info">
+              <Icon name="copy" size={14} />
+              <span>
+                检测到 {dupGroups.length} 组疑似重复文献（按 DOI / arXiv / 标题匹配）。右键多余条目可移入回收站。
+              </span>
+            </div>
+          )}
+
           {(busy || indexing) && (
             <div className="hint row" style={{ padding: '4px 12px 6px' }}>
               <span className="spinner" /> {busy || indexing}
             </div>
           )}
-          {lib.checked.length > 0 && <BulkBar docs={docs ?? []} />}
+          {lib.checked.length > 0 && <BulkBar docs={shown} collections={collections ?? []} isTrash={isTrash} />}
 
           {/* Zotero multi-column header (in table mode) */}
           {lib.layout === 'table' && shown.length > 0 && (
@@ -290,14 +455,20 @@ export function LibraryPage() {
           <div className={`doc-list${lib.layout === 'table' ? ' mode-table' : ' mode-list'}`}>
             {docs && shown.length === 0 && (
               <div className="empty">
-                {docs.length === 0 ? (
+                {activeDocs.length === 0 && !isTrash ? (
                   <>
                     <Icon name="upload" size={28} />
                     <p>把 PDF 拖到这里，或点击左上角「导入」。</p>
                     <p className="hint">也可以粘贴 DOI / arXiv 链接，或导入 Zotero 导出的 BibTeX。所有数据只保存在本机。</p>
                   </>
+                ) : isTrash ? (
+                  '回收站是空的'
+                ) : lib.view.kind === 'duplicates' ? (
+                  '太棒了，文库中没有发现重复文献'
+                ) : lib.view.kind === 'unfiled' && !hasFilters && !q ? (
+                  '所有文献都已归类整理完毕'
                 ) : (
-                  '没有符合条件的文献'
+                  '没有符合当前筛选条件的文献'
                 )}
               </div>
             )}
@@ -308,6 +479,9 @@ export function LibraryPage() {
                 stripe={idx % 2 === 1}
                 layout={lib.layout}
                 isOpen={openDocIds.has(d.id)}
+                isTrash={isTrash}
+                hasNotes={docsWithNotes.has(d.id)}
+                dupGroup={lib.view.kind === 'duplicates' ? dupGroupIndex.get(d.id) : undefined}
                 hits={activeHits?.get(d.id)}
                 onContextMenu={(e) => {
                   e.preventDefault();
@@ -332,34 +506,42 @@ export function LibraryPage() {
   );
 }
 
-function MobileViewSelect({ docs }: { docs: DocRecord[] }) {
+function MobileViewSelect({
+  activeDocs,
+  collections,
+  trashedCount,
+  dupCount,
+}: {
+  activeDocs: DocRecord[];
+  collections: Collection[];
+  trashedCount: number;
+  dupCount: number;
+}) {
   const view = useLibrary((s) => s.view);
   const setView = useLibrary((s) => s.setView);
-  const collections = useLiveQuery(() => db.collections.orderBy('order').toArray(), []);
-  const tags = [...new Set(docs.flatMap((d) => d.tags))].sort();
+  const tree = useMemo(() => flattenCollectionTree(collections), [collections]);
+  const tags = [...new Set(activeDocs.flatMap((d) => d.tags))].sort();
   const value = `${view.kind}:${view.id ?? ''}`;
   return (
     <select
       className="select sm show-sm"
-      style={{ width: 'auto', maxWidth: 140 }}
+      style={{ width: 'auto', maxWidth: 150 }}
       value={value}
       onChange={(e) => {
         const [kind, ...rest] = e.target.value.split(':');
         setView({ kind: kind as LibraryView['kind'], id: rest.join(':') || undefined });
       }}
     >
-      <option value="all:">全部文献</option>
-      <option value="recent:">最近添加</option>
-      <option value="starred:">星标</option>
-      <option value="unread:">未读</option>
-      <option value="reading:">在读</option>
-      <option value="done:">已读</option>
-      <option value="nopdf:">无 PDF</option>
-      {collections?.map((c) => (
-        <option key={c.id} value={`collection:${c.id}`}>
-          ▸ {c.name}
+      <option value="all:">我的文库 ({activeDocs.length})</option>
+      {tree.map(({ col, depth }) => (
+        <option key={col.id} value={`collection:${col.id}`}>
+          {'　'.repeat(depth)}▸ {col.name}
         </option>
       ))}
+      <option value="recent:">最近阅读</option>
+      <option value="unfiled:">未分类条目</option>
+      {dupCount > 0 && <option value="duplicates:">重复条目 ({dupCount})</option>}
+      <option value="trash:">回收站 ({trashedCount})</option>
       {tags.map((t) => (
         <option key={t} value={`tag:${t}`}>
           # {t}
@@ -374,6 +556,9 @@ function DocRow({
   stripe,
   layout,
   isOpen,
+  isTrash,
+  hasNotes,
+  dupGroup,
   hits,
   onContextMenu,
 }: {
@@ -381,6 +566,9 @@ function DocRow({
   stripe: boolean;
   layout: 'table' | 'list';
   isOpen: boolean;
+  isTrash: boolean;
+  hasNotes: boolean;
+  dupGroup?: number;
   hits?: TextHit[];
   onContextMenu: (e: React.MouseEvent) => void;
 }) {
@@ -388,16 +576,23 @@ function DocRow({
   const checked = useLibrary((s) => s.checked.includes(d.id));
   const select = useLibrary((s) => s.select);
   const toggleCheck = useLibrary((s) => s.toggleCheck);
-  const open = (background = false) => (d.hasPdf ? openDocTab(d.id, { title: d.title, background }) : select(d.id));
+  const tagColors = useSettings((s) => s.tagColors ?? {});
+  const open = (background = false) =>
+    !isTrash && d.hasPdf ? openDocTab(d.id, { title: d.title, background }) : select(d.id);
 
-  const dragProps = {
-    draggable: true,
-    onDragStart: (e: React.DragEvent) => {
-      const ids = useLibrary.getState().checked.includes(d.id) ? useLibrary.getState().checked : [d.id];
-      e.dataTransfer.setData(DRAG_TYPE, JSON.stringify(ids));
-      e.dataTransfer.effectAllowed = 'copy';
-    },
-  };
+  // Colored dots from Zotero-style colored tags on this doc
+  const coloredTags = d.tags.filter((t) => !!tagColors[t]);
+
+  const dragProps = isTrash
+    ? {}
+    : {
+        draggable: true,
+        onDragStart: (e: React.DragEvent) => {
+          const ids = useLibrary.getState().checked.includes(d.id) ? useLibrary.getState().checked : [d.id];
+          e.dataTransfer.setData(DRAG_TYPE, JSON.stringify(ids));
+          e.dataTransfer.effectAllowed = 'copy';
+        },
+      };
 
   if (layout === 'table') {
     return (
@@ -407,14 +602,14 @@ function DocRow({
         onClick={(e) => open(e.ctrlKey || e.metaKey)}
         onContextMenu={onContextMenu}
         onAuxClick={(e) => {
-          if (e.button === 1 && d.hasPdf) {
+          if (e.button === 1 && !isTrash && d.hasPdf) {
             e.preventDefault();
             open(true);
           }
         }}
         onKeyDown={(e) => e.key === 'Enter' && open(e.ctrlKey || e.metaKey)}
         tabIndex={0}
-        title="单击打开阅读 · 右键查看详情与更多操作 · 中键后台打开"
+        title={isTrash ? '单击查看详情 · 右键还原或彻底删除' : '单击打开阅读 · 右键查看详情与更多操作 · 中键后台打开'}
       >
         <div className="doc-tr">
           <div className="col-chk">
@@ -442,12 +637,27 @@ function DocRow({
             <span className={`doc-ico${d.hasPdf ? ' has-pdf' : ''}`} title={d.hasPdf ? '含 PDF 附件' : '无 PDF 附件'}>
               <Icon name={d.hasPdf ? 'filePdf' : 'nofile'} size={14} />
             </span>
-            {isOpen && <span className="open-dot" title="已在顶部标签页打开" />}
+            {isOpen && !isTrash && <span className="open-dot" title="已在顶部标签页打开" />}
+            {coloredTags.map((t) => (
+              <span
+                key={t}
+                className="tag-color-dot"
+                style={{ background: TAG_COLOR_HEX[tagColors[t]] }}
+                title={`彩色标签：${t}`}
+              />
+            ))}
+            {dupGroup !== undefined && <span className="dup-badge">重复 #{dupGroup}</span>}
             <span className="doc-title-text">{d.title}</span>
+            {hasNotes && (
+              <span className="doc-note-ico hide-sm" title="含高亮或笔记">
+                <Icon name="notes" size={12} />
+              </span>
+            )}
             {d.tags.length > 0 && (
               <span className="inline-tags hide-sm">
                 {d.tags.slice(0, 2).map((t) => (
                   <span key={t} className="tag-chip mini">
+                    {tagColors[t] && <span className="tag-color-dot sm" style={{ background: TAG_COLOR_HEX[tagColors[t]] }} />}
                     {t}
                   </span>
                 ))}
@@ -489,14 +699,14 @@ function DocRow({
       onClick={(e) => open(e.ctrlKey || e.metaKey)}
       onContextMenu={onContextMenu}
       onAuxClick={(e) => {
-        if (e.button === 1 && d.hasPdf) {
+        if (e.button === 1 && !isTrash && d.hasPdf) {
           e.preventDefault();
           open(true);
         }
       }}
       onKeyDown={(e) => e.key === 'Enter' && open(e.ctrlKey || e.metaKey)}
       tabIndex={0}
-      title="单击打开阅读 · 右键查看详情与更多操作 · 中键后台打开"
+      title={isTrash ? '单击查看详情 · 右键还原或彻底删除' : '单击打开阅读 · 右键查看详情与更多操作 · 中键后台打开'}
     >
       <input
         type="checkbox"
@@ -517,7 +727,16 @@ function DocRow({
       </button>
       <div className="doc-main">
         <div className="doc-title">
-          {isOpen && <span className="open-dot" title="已在顶部标签页打开" />}
+          {isOpen && !isTrash && <span className="open-dot" title="已在顶部标签页打开" />}
+          {coloredTags.map((t) => (
+            <span
+              key={t}
+              className="tag-color-dot"
+              style={{ background: TAG_COLOR_HEX[tagColors[t]] }}
+              title={`彩色标签：${t}`}
+            />
+          ))}
+          {dupGroup !== undefined && <span className="dup-badge">重复 #{dupGroup}</span>}
           {d.title}
           {!d.hasPdf && <span className="badge">无 PDF</span>}
         </div>
@@ -528,6 +747,7 @@ function DocRow({
           <div className="tag-chips">
             {d.tags.map((t) => (
               <span key={t} className="tag-chip">
+                {tagColors[t] && <span className="tag-color-dot sm" style={{ background: TAG_COLOR_HEX[tagColors[t]] }} />}
                 {t}
               </span>
             ))}
@@ -543,30 +763,69 @@ function DocRow({
         ))}
       </div>
       <span className={`status-pill ${d.status}`}>{STATUS_LABEL[d.status]}</span>
-      <button className="btn sm hide-sm" onClick={(e) => (e.stopPropagation(), select(d.id))}>
-        详情
-      </button>
+      {isTrash ? (
+        <button className="btn sm hide-sm" onClick={(e) => (e.stopPropagation(), void restoreDocs([d.id]))}>
+          还原
+        </button>
+      ) : (
+        <button className="btn sm hide-sm" onClick={(e) => (e.stopPropagation(), select(d.id))}>
+          详情
+        </button>
+      )}
     </div>
   );
 }
 
 function DocContextMenu({ doc, x, y, onClose }: { doc: DocRecord; x: number; y: number; onClose: () => void }) {
   const select = useLibrary((s) => s.select);
+  const isTrash = !!doc.deletedAt;
   const left = Math.max(8, Math.min(x, window.innerWidth - 220));
-  const top = Math.max(8, Math.min(y, window.innerHeight - 330));
+  const top = Math.max(8, Math.min(y, window.innerHeight - (isTrash ? 160 : 340)));
 
   const copyCite = (style: 'apa' | 'gbt7714') => {
     void navigator.clipboard.writeText(formatCitation(doc.meta, style));
     onClose();
   };
 
+  if (isTrash) {
+    return (
+      <div className="ctx-menu" style={{ left, top }} onMouseDown={(e) => e.stopPropagation()} onContextMenu={(e) => e.preventDefault()}>
+        <button
+          className="ctx-item"
+          onClick={() => {
+            void restoreDocs([doc.id]);
+            onClose();
+          }}
+        >
+          还原到我的文库
+        </button>
+        <button
+          className="ctx-item"
+          onClick={() => {
+            select(doc.id);
+            onClose();
+          }}
+        >
+          查看详情
+        </button>
+        <div className="ctx-sep" />
+        <button
+          className="ctx-item danger"
+          onClick={async () => {
+            onClose();
+            if (!confirm(`永久删除「${doc.title}」及其笔记、翻译缓存？此操作不可撤销。`)) return;
+            if (useLibrary.getState().selectedId === doc.id) select(null);
+            await deleteDocument(doc.id);
+          }}
+        >
+          彻底删除
+        </button>
+      </div>
+    );
+  }
+
   return (
-    <div
-      className="ctx-menu"
-      style={{ left, top }}
-      onMouseDown={(e) => e.stopPropagation()}
-      onContextMenu={(e) => e.preventDefault()}
-    >
+    <div className="ctx-menu" style={{ left, top }} onMouseDown={(e) => e.stopPropagation()} onContextMenu={(e) => e.preventDefault()}>
       <button
         className="ctx-item"
         onClick={() => {
@@ -644,30 +903,65 @@ function DocContextMenu({ doc, x, y, onClose }: { doc: DocRecord; x: number; y: 
         className="ctx-item danger"
         onClick={async () => {
           onClose();
-          if (!confirm(`删除「${doc.title}」及其笔记、翻译缓存？此操作不可撤销。`)) return;
           useTabs.getState().closeTab(doc.id);
           if (useLibrary.getState().selectedId === doc.id) select(null);
-          await deleteDocument(doc.id);
+          await trashDocs([doc.id]);
         }}
       >
-        删除文献
+        移入回收站
       </button>
     </div>
   );
 }
 
-function Sidebar({ docs }: { docs: DocRecord[] }) {
+// ---------------------------------------------------------------- Zotero-style Sidebar
+
+function Sidebar({
+  activeDocs,
+  trashedCount,
+  dupCount,
+  collections,
+}: {
+  activeDocs: DocRecord[];
+  trashedCount: number;
+  dupCount: number;
+  collections: Collection[];
+}) {
   const view = useLibrary((s) => s.view);
   const setView = useLibrary((s) => s.setView);
-  const collections = useLiveQuery(() => db.collections.orderBy('order').toArray(), []);
-  const [adding, setAdding] = useState(false);
-  const [name, setName] = useState('');
-  const [over, setOver] = useState<string | null>(null);
-  const [editing, setEditing] = useState<string | null>(null);
+  const expandedCols = useLibrary((s) => s.expandedCols);
+  const toggleColExpanded = useLibrary((s) => s.toggleColExpanded);
+  const setColExpanded = useLibrary((s) => s.setColExpanded);
+  const tagColors = useSettings((s) => s.tagColors ?? {});
+  const setTagColor = useSettings((s) => s.setTagColor);
+
+  const [addingParent, setAddingParent] = useState<string | null | undefined>(undefined); // undefined = closed, null = root, string = parentId
+  const [newName, setNewName] = useState('');
+  const [overTarget, setOverTarget] = useState<string | null>(null);
+  const [editingCol, setEditingCol] = useState<string | null>(null);
+  const [colMenu, setColMenu] = useState<{ col: Collection; x: number; y: number } | null>(null);
+  const [tagMenu, setTagMenu] = useState<{ tag: string; x: number; y: number } | null>(null);
   const [tagFilter, setTagFilter] = useState('');
   const [width, setWidth] = useState(loadSideWidth);
   const [dragging, setDragging] = useState(false);
   const startRef = useRef<{ x: number; w: number } | null>(null);
+
+  useEffect(() => {
+    if (!colMenu && !tagMenu) return;
+    const close = () => {
+      setColMenu(null);
+      setTagMenu(null);
+    };
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && close();
+    window.addEventListener('mousedown', close);
+    window.addEventListener('resize', close);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('mousedown', close);
+      window.removeEventListener('resize', close);
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [colMenu, tagMenu]);
 
   useEffect(() => {
     if (!dragging) return;
@@ -694,140 +988,258 @@ function Sidebar({ docs }: { docs: DocRecord[] }) {
     }
   }, [dragging, width]);
 
+  // Build recursive tree rows respecting collapsed parent state
+  const tree = useMemo(() => flattenCollectionTree(collections), [collections]);
+  const visibleTree = useMemo(() => {
+    const parentById = new Map(collections.map((c) => [c.id, c.parentId ?? null]));
+    const isHidden = (id: string) => {
+      let cur = parentById.get(id) ?? null;
+      const seen = new Set<string>([id]);
+      while (cur && !seen.has(cur)) {
+        if (expandedCols[cur] === false) return true;
+        seen.add(cur);
+        cur = parentById.get(cur) ?? null;
+      }
+      return false;
+    };
+    return tree.filter((item) => !isHidden(item.col.id));
+  }, [tree, collections, expandedCols]);
+
+  // Recursive count for each collection
+  const colCounts = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const c of collections) {
+      const ids = getDescendantCollectionIds(collections, c.id);
+      let n = 0;
+      for (const d of activeDocs) if (d.collectionIds.some((cid) => ids.has(cid))) n++;
+      map.set(c.id, n);
+    }
+    return map;
+  }, [collections, activeDocs]);
+
   const tags = useMemo(() => {
     const m = new Map<string, number>();
-    docs.forEach((d) => d.tags.forEach((t) => m.set(t, (m.get(t) ?? 0) + 1)));
+    activeDocs.forEach((d) => d.tags.forEach((t) => m.set(t, (m.get(t) ?? 0) + 1)));
     const q = tagFilter.trim().toLowerCase();
     return [...m.entries()]
       .filter(([t]) => !q || t.toLowerCase().includes(q))
-      .sort((a, b) => a[0].localeCompare(b[0], 'zh'));
-  }, [docs, tagFilter]);
+      .sort((a, b) => {
+        const ca = tagColors[a[0]] ? 0 : 1;
+        const cb = tagColors[b[0]] ? 0 : 1;
+        return ca - cb || a[0].localeCompare(b[0], 'zh');
+      });
+  }, [activeDocs, tagFilter, tagColors]);
 
-  const count = (v: LibraryView) => docs.filter((d) => matchesView(d, v)).length;
+  const recentCount = useMemo(() => activeDocs.filter(isRecentDoc).length, [activeDocs]);
+  const unfiledCount = useMemo(() => activeDocs.filter((d) => d.collectionIds.length === 0).length, [activeDocs]);
+
   const isActive = (v: LibraryView) => view.kind === v.kind && view.id === v.id;
 
-  const smart: { v: LibraryView; label: string; icon: IconName }[] = [
-    { v: { kind: 'all' }, label: '全部文献', icon: 'library' },
-    { v: { kind: 'recent' }, label: '最近添加', icon: 'clock' },
-    { v: { kind: 'starred' }, label: '星标', icon: 'star' },
-    { v: { kind: 'unread' }, label: '未读', icon: 'circle' },
-    { v: { kind: 'reading' }, label: '在读', icon: 'half' },
-    { v: { kind: 'done' }, label: '已读', icon: 'done' },
-    { v: { kind: 'nopdf' }, label: '无 PDF', icon: 'nofile' },
-  ];
+  const startNewCol = (parentId: string | null) => {
+    if (parentId) setColExpanded(parentId, true);
+    setAddingParent(parentId);
+    setNewName('');
+  };
 
-  const dropProps = (cid: string) => ({
+  const commitNewCol = async () => {
+    const name = newName.trim();
+    const pid = addingParent ?? null;
+    setAddingParent(undefined);
+    setNewName('');
+    if (!name) return;
+    const c = await createCollection(name, pid);
+    setView({ kind: 'collection', id: c.id });
+  };
+
+  const dropOnCol = (cid: string | null) => ({
     onDragOver: (e: React.DragEvent) => {
-      if (e.dataTransfer.types.includes(DRAG_TYPE)) {
+      if (e.dataTransfer.types.includes(DRAG_TYPE) || e.dataTransfer.types.includes(COL_DRAG_TYPE)) {
         e.preventDefault();
-        setOver(cid);
+        setOverTarget(cid ?? '__root__');
       }
     },
-    onDragLeave: () => setOver(null),
+    onDragLeave: () => setOverTarget(null),
     onDrop: (e: React.DragEvent) => {
-      setOver(null);
-      const raw = e.dataTransfer.getData(DRAG_TYPE);
-      if (raw) {
+      setOverTarget(null);
+      const docRaw = e.dataTransfer.getData(DRAG_TYPE);
+      if (docRaw && cid) {
         e.preventDefault();
-        void addToCollection(JSON.parse(raw) as string[], cid);
+        void addToCollection(JSON.parse(docRaw) as string[], cid);
+        return;
+      }
+      const colId = e.dataTransfer.getData(COL_DRAG_TYPE);
+      if (colId && colId !== cid) {
+        e.preventDefault();
+        void moveCollection(colId, cid);
+        if (cid) setColExpanded(cid, true);
       }
     },
   });
 
+  const systemViews: { v: LibraryView; label: string; icon: IconName; count: number; highlight?: boolean }[] = [
+    { v: { kind: 'recent' }, label: '最近阅读', icon: 'clock', count: recentCount },
+    { v: { kind: 'unfiled' }, label: '未分类条目', icon: 'inbox', count: unfiledCount },
+    { v: { kind: 'duplicates' }, label: '重复条目', icon: 'copy', count: dupCount, highlight: dupCount > 0 },
+    { v: { kind: 'trash' }, label: '回收站', icon: 'trash', count: trashedCount },
+  ];
+
+  const renderInlineNewInput = (depth: number) => (
+    <input
+      className="input sm"
+      style={{ width: `calc(100% - ${12 + depth * 14}px)`, marginLeft: 8 + depth * 14, marginTop: 2, marginBottom: 4 }}
+      autoFocus
+      placeholder={depth === 0 ? '新分类名称，回车确认' : '子分类名称，回车确认'}
+      value={newName}
+      onChange={(e) => setNewName(e.target.value)}
+      onBlur={() => {
+        setAddingParent(undefined);
+        setNewName('');
+      }}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') void commitNewCol();
+        else if (e.key === 'Escape') {
+          setAddingParent(undefined);
+          setNewName('');
+        }
+      }}
+    />
+  );
+
   return (
     <aside className="lib-side" style={{ width }}>
       <div className="lib-side-scroll">
-        <div className="side-section" style={{ marginTop: 4 }}>
-          <span>我的文库</span>
+        {/* Zotero primary root: 我的文库 + nested Collection Tree directly underneath */}
+        <div
+          className={`side-item root-item${isActive({ kind: 'all' }) ? ' active' : ''}${overTarget === '__root__' ? ' drop' : ''}`}
+          role="button"
+          tabIndex={0}
+          onClick={() => setView({ kind: 'all' })}
+          {...dropOnCol(null)}
+          title="查看全部文献 · 将子分类拖到此处可移至顶层"
+        >
+          <span className="side-ico">
+            <Icon name="library" size={14} />
+          </span>
+          <span className="side-name" style={{ fontWeight: 600 }}>
+            我的文库
+          </span>
+          <span className="count">{activeDocs.length}</span>
+          <button
+            className="side-add"
+            title="新建分类"
+            onClick={(e) => {
+              e.stopPropagation();
+              startNewCol(null);
+            }}
+          >
+            <Icon name="plus" size={13} />
+          </button>
         </div>
-        {smart.map((s) => (
-          <button key={s.v.kind} className={`side-item${isActive(s.v) ? ' active' : ''}`} onClick={() => setView(s.v)}>
+
+        {addingParent === null && renderInlineNewInput(0)}
+
+        {visibleTree.map(({ col: c, depth, hasChildren }) => {
+          const isOpen = expandedCols[c.id] !== false;
+          return (
+            <div key={c.id}>
+              {editingCol === c.id ? (
+                <input
+                  className="input sm"
+                  style={{ width: `calc(100% - ${16 + depth * 14}px)`, marginLeft: 12 + depth * 14, marginTop: 2, marginBottom: 2 }}
+                  autoFocus
+                  defaultValue={c.name}
+                  onBlur={(e) => {
+                    if (e.target.value.trim()) void renameCollection(c.id, e.target.value);
+                    setEditingCol(null);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+                    if (e.key === 'Escape') setEditingCol(null);
+                  }}
+                />
+              ) : (
+                <div
+                  className={`side-item tree-item${isActive({ kind: 'collection', id: c.id }) ? ' active' : ''}${overTarget === c.id ? ' drop' : ''}`}
+                  style={{ paddingLeft: 10 + depth * 14 }}
+                  role="button"
+                  tabIndex={0}
+                  draggable
+                  onDragStart={(e) => {
+                    e.dataTransfer.setData(COL_DRAG_TYPE, c.id);
+                    e.dataTransfer.effectAllowed = 'move';
+                  }}
+                  onClick={() => setView({ kind: 'collection', id: c.id })}
+                  onDoubleClick={() => setEditingCol(c.id)}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    setTagMenu(null);
+                    setColMenu({ col: c, x: e.clientX, y: e.clientY });
+                  }}
+                  {...dropOnCol(c.id)}
+                  title="单击查看 · 双击重命名 · 右键新建子分类或管理 · 支持拖拽文献和子目录"
+                >
+                  {hasChildren ? (
+                    <button
+                      type="button"
+                      className="tree-caret"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        toggleColExpanded(c.id);
+                      }}
+                      title={isOpen ? '折叠子分类' : '展开子分类'}
+                    >
+                      <Icon name={isOpen ? 'down' : 'next'} size={11} />
+                    </button>
+                  ) : (
+                    <span className="tree-caret-pad" />
+                  )}
+                  <span className="side-ico">
+                    <Icon name="folder" size={14} />
+                  </span>
+                  <span className="side-name">{c.name}</span>
+                  <span className="count">{colCounts.get(c.id) ?? 0}</span>
+                  <button
+                    className="side-add"
+                    title="新建子分类"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      startNewCol(c.id);
+                    }}
+                  >
+                    <Icon name="plus" size={12} />
+                  </button>
+                </div>
+              )}
+              {addingParent === c.id && renderInlineNewInput(depth + 1)}
+            </div>
+          );
+        })}
+
+        {collections.length === 0 && addingParent === undefined && (
+          <button className="side-empty-cta" onClick={() => startNewCol(null)}>
+            + 新建课题分类（支持多级子目录）
+          </button>
+        )}
+
+        <div className="side-divider" />
+
+        {/* Compact Zotero system views */}
+        {systemViews.map((s) => (
+          <button
+            key={s.v.kind}
+            className={`side-item${isActive(s.v) ? ' active' : ''}`}
+            onClick={() => setView(s.v)}
+          >
             <span className="side-ico">
               <Icon name={s.icon} size={14} />
             </span>
             <span className="side-name">{s.label}</span>
-            <span className="count">{count(s.v)}</span>
+            <span className={`count${s.highlight ? ' warn' : ''}`}>{s.count}</span>
           </button>
         ))}
-
-        <div className="side-section">
-          <span>分类</span>
-          <button className="icon-btn" style={{ width: 22, height: 22 }} title="新建分类" onClick={() => setAdding(true)}>
-            <Icon name="plus" size={13} />
-          </button>
-        </div>
-        {adding && (
-          <input
-            className="input sm"
-            style={{ width: 'calc(100% - 8px)', margin: '2px 4px 4px' }}
-            autoFocus
-            placeholder="分类名称，回车确认"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            onBlur={() => (setAdding(false), setName(''))}
-            onKeyDown={async (e) => {
-              if (e.key === 'Enter' && name.trim()) {
-                const c = await createCollection(name);
-                setAdding(false);
-                setName('');
-                setView({ kind: 'collection', id: c.id });
-              } else if (e.key === 'Escape') setAdding(false);
-            }}
-          />
-        )}
-        {collections?.map((c) =>
-          editing === c.id ? (
-            <input
-              key={c.id}
-              className="input sm"
-              style={{ width: 'calc(100% - 8px)', margin: '2px 4px' }}
-              autoFocus
-              defaultValue={c.name}
-              onBlur={(e) => {
-                if (e.target.value.trim()) void db.collections.update(c.id, { name: e.target.value.trim() });
-                setEditing(null);
-              }}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
-                if (e.key === 'Escape') setEditing(null);
-              }}
-            />
-          ) : (
-            <div
-              key={c.id}
-              className={`side-item${isActive({ kind: 'collection', id: c.id }) ? ' active' : ''}${over === c.id ? ' drop' : ''}`}
-              role="button"
-              tabIndex={0}
-              onClick={() => setView({ kind: 'collection', id: c.id })}
-              onDoubleClick={() => setEditing(c.id)}
-              {...dropProps(c.id)}
-              title="双击重命名；把文献拖到这里加入分类"
-            >
-              <span className="side-ico">
-                <Icon name="folder" size={14} />
-              </span>
-              <span className="side-name">{c.name}</span>
-              <span className="count">{count({ kind: 'collection', id: c.id })}</span>
-              <button
-                className="side-del"
-                title="删除分类（不删除文献）"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  if (confirm(`删除分类「${c.name}」？其中的文献不会被删除。`)) {
-                    void deleteCollection(c.id);
-                    if (isActive({ kind: 'collection', id: c.id })) setView({ kind: 'all' });
-                  }
-                }}
-              >
-                ×
-              </button>
-            </div>
-          ),
-        )}
-        {collections?.length === 0 && !adding && <div className="hint" style={{ padding: '2px 10px' }}>点 + 新建分类，拖动文献归类</div>}
       </div>
 
-      {/* Zotero-style docked bottom Tag Selector */}
+      {/* Zotero-style docked bottom Tag Selector with colored tags */}
       <div className="tag-pane">
         <div className="tag-pane-head">
           <span className="row" style={{ gap: 5 }}>
@@ -841,7 +1253,7 @@ function Sidebar({ docs }: { docs: DocRecord[] }) {
         </div>
         <div className="tag-pane-list">
           {tags.length === 0 ? (
-            <span className="hint">{tagFilter ? '无匹配标签' : '暂无标签'}</span>
+            <span className="hint">{tagFilter ? '无匹配标签' : '暂无标签（右键可设颜色）'}</span>
           ) : (
             tags.map(([t, n]) => (
               <button
@@ -852,8 +1264,14 @@ function Sidebar({ docs }: { docs: DocRecord[] }) {
                   const to = prompt(`重命名标签「${t}」为：`, t);
                   if (to && to !== t) void renameTag(t, to);
                 }}
-                title="点击筛选，双击重命名"
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  setColMenu(null);
+                  setTagMenu({ tag: t, x: e.clientX, y: e.clientY });
+                }}
+                title="单击筛选 · 右键设置彩色标签或重命名"
               >
+                {tagColors[t] && <span className="tag-color-dot sm" style={{ background: TAG_COLOR_HEX[tagColors[t]] }} />}
                 {t} <span className="count">{n}</span>
               </button>
             ))
@@ -867,6 +1285,108 @@ function Sidebar({ docs }: { docs: DocRecord[] }) {
         />
       </div>
 
+      {/* Collection right-click context menu */}
+      {colMenu && (
+        <div
+          className="ctx-menu"
+          style={{ left: Math.max(8, Math.min(colMenu.x, window.innerWidth - 216)), top: Math.max(8, Math.min(colMenu.y, window.innerHeight - 190)) }}
+          onMouseDown={(e) => e.stopPropagation()}
+          onContextMenu={(e) => e.preventDefault()}
+        >
+          <button
+            className="ctx-item"
+            onClick={() => {
+              startNewCol(colMenu.col.id);
+              setColMenu(null);
+            }}
+          >
+            新建子分类
+          </button>
+          <button
+            className="ctx-item"
+            onClick={() => {
+              setEditingCol(colMenu.col.id);
+              setColMenu(null);
+            }}
+          >
+            重命名
+          </button>
+          {colMenu.col.parentId && (
+            <button
+              className="ctx-item"
+              onClick={() => {
+                void moveCollection(colMenu.col.id, null);
+                setColMenu(null);
+              }}
+            >
+              移至顶层分类
+            </button>
+          )}
+          <div className="ctx-sep" />
+          <button
+            className="ctx-item danger"
+            onClick={() => {
+              const target = colMenu.col;
+              setColMenu(null);
+              if (confirm(`删除分类「${target.name}」及其子分类？其中的文献不会被删除。`)) {
+                void deleteCollection(target.id);
+                if (view.kind === 'collection' && view.id === target.id) setView({ kind: 'all' });
+              }
+            }}
+          >
+            删除分类（保留文献）
+          </button>
+        </div>
+      )}
+
+      {/* Tag color & rename right-click menu */}
+      {tagMenu && (
+        <div
+          className="ctx-menu"
+          style={{ left: Math.max(8, Math.min(tagMenu.x, window.innerWidth - 216)), top: Math.max(8, Math.min(tagMenu.y, window.innerHeight - 160)) }}
+          onMouseDown={(e) => e.stopPropagation()}
+          onContextMenu={(e) => e.preventDefault()}
+        >
+          <div className="ctx-label">设置标签颜色「{tagMenu.tag}」</div>
+          <div className="ctx-colors">
+            {TAG_COLORS.map((c) => (
+              <button
+                key={c.id}
+                className={`ctx-color-btn${tagColors[tagMenu.tag] === c.id ? ' active' : ''}`}
+                style={{ background: c.hex }}
+                title={c.label}
+                onClick={() => {
+                  setTagColor(tagMenu.tag, c.id);
+                  setTagMenu(null);
+                }}
+              />
+            ))}
+            <button
+              className="ctx-color-clear"
+              title="清除颜色"
+              onClick={() => {
+                setTagColor(tagMenu.tag, null);
+                setTagMenu(null);
+              }}
+            >
+              ×
+            </button>
+          </div>
+          <div className="ctx-sep" />
+          <button
+            className="ctx-item"
+            onClick={() => {
+              const t = tagMenu.tag;
+              setTagMenu(null);
+              const to = prompt(`重命名标签「${t}」为：`, t);
+              if (to && to !== t) void renameTag(t, to);
+            }}
+          >
+            重命名标签
+          </button>
+        </div>
+      )}
+
       <div
         className={`pane-resizer right${dragging ? ' dragging' : ''}`}
         onPointerDown={(e) => {
@@ -879,11 +1399,11 @@ function Sidebar({ docs }: { docs: DocRecord[] }) {
   );
 }
 
-function BulkBar({ docs }: { docs: DocRecord[] }) {
+function BulkBar({ docs, collections, isTrash }: { docs: DocRecord[]; collections: Collection[]; isTrash: boolean }) {
   const checked = useLibrary((s) => s.checked);
   const setChecked = useLibrary((s) => s.setChecked);
   const view = useLibrary((s) => s.view);
-  const collections = useLiveQuery(() => db.collections.orderBy('order').toArray(), []);
+  const tree = useMemo(() => flattenCollectionTree(collections), [collections]);
   const [tagInput, setTagInput] = useState<string | null>(null);
   const tagRef = useRef<HTMLInputElement>(null);
   const items = docs.filter((d) => checked.includes(d.id));
@@ -896,6 +1416,33 @@ function BulkBar({ docs }: { docs: DocRecord[] }) {
       alert(`已复制 ${items.length} 条引用到剪贴板`);
     }
   };
+
+  if (isTrash) {
+    return (
+      <div className="bulk-bar">
+        <span>
+          已选 <b>{checked.length}</b>
+        </span>
+        <button className="btn sm primary" onClick={() => (void restoreDocs(checked), setChecked([]))}>
+          还原选中
+        </button>
+        <button
+          className="btn sm danger"
+          onClick={async () => {
+            if (!confirm(`永久删除选中的 ${checked.length} 篇文献及其笔记、翻译缓存？此操作不可撤销。`)) return;
+            for (const id of checked) await deleteDocument(id);
+            setChecked([]);
+          }}
+        >
+          彻底删除
+        </button>
+        <div className="spacer" />
+        <button className="icon-btn sm-ico" title="取消选择" onClick={() => setChecked([])}>
+          <Icon name="close" size={15} />
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="bulk-bar">
@@ -923,8 +1470,10 @@ function BulkBar({ docs }: { docs: DocRecord[] }) {
         }}
       >
         <option value="">加入分类…</option>
-        {collections?.map((c) => (
+        {tree.map(({ col: c, depth }) => (
           <option key={c.id} value={c.id}>
+            {'　'.repeat(depth)}
+            {depth > 0 ? '└ ' : ''}
             {c.name}
           </option>
         ))}
@@ -970,12 +1519,12 @@ function BulkBar({ docs }: { docs: DocRecord[] }) {
       <button
         className="btn sm danger"
         onClick={async () => {
-          if (!confirm(`删除选中的 ${checked.length} 篇文献及其笔记、翻译缓存？此操作不可撤销。`)) return;
-          for (const id of checked) await deleteDocument(id);
+          for (const id of checked) useTabs.getState().closeTab(id);
+          await trashDocs(checked);
           setChecked([]);
         }}
       >
-        删除
+        移入回收站
       </button>
       <div className="spacer" />
       <button className="icon-btn sm-ico" title="取消选择" onClick={() => setChecked([])}>

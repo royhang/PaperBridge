@@ -15,11 +15,12 @@ export function NotesOverview() {
   const [color, setColor] = useState<HighlightColor | 'all'>('all');
   const [onlyCommented, setOnlyCommented] = useState(false);
 
-  const docMap = useMemo(() => new Map((docs ?? []).map((d) => [d.id, d])), [docs]);
+  const docMap = useMemo(() => new Map((docs ?? []).filter((d) => !d.deletedAt).map((d) => [d.id, d])), [docs]);
   const groups = useMemo(() => {
     const ql = q.trim().toLowerCase();
     const filtered = (notes ?? []).filter(
       (n) =>
+        docMap.has(n.docId) &&
         (color === 'all' || n.color === color) &&
         (!onlyCommented || n.comment.trim()) &&
         (!ql || `${n.quote}\n${n.comment}\n${n.translation ?? ''}\n${docMap.get(n.docId)?.title ?? ''}`.toLowerCase().includes(ql)),

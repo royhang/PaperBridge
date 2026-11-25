@@ -1,5 +1,6 @@
-import { db, sha256Hex, uid, type DocRecord, type ReadStatus } from '../db/db';
+import { db, deleteDocument, sha256Hex, uid, type Collection, type DocRecord, type ReadStatus } from '../db/db';
 import { openPdf, readTitle, type PDFDocumentProxy } from '../pdf/loader';
+import { useSettings } from '../store/settings';
 import { parseBibTeX } from './bibtex';
 import { crossrefToMeta, extractIdentifiers, guessMetaFromPdf, normalizeTitleForDedupe, parseArxivAtom, parseIdentifierInput, titleFromLayout, type TextRun } from './meta';
 import { NetError, getJson, proxyGet } from './net';
@@ -56,19 +57,76 @@ async function pageTextAndTitle(pdf: PDFDocumentProxy, i: number): Promise<{ tex
   return { text: out.replace(/[ \t]+/g, ' ').replace(/(\p{L})-\n(\p{Ll})/gu, '$1$2'), title };
 }
 
-/** Find an existing entry that is the same work (by DOI, arXiv id or normalised title). */
+/** Find an existing active (non-trashed) entry that is the same work (by DOI, arXiv id or normalised title). */
 export async function findDuplicate(meta: Partial<PaperMeta>, exceptId?: string): Promise<DocRecord | undefined> {
   const cands: (DocRecord | undefined)[] = [];
-  if (meta.doi) cands.push(await db.docs.where('meta.doi').equalsIgnoreCase(meta.doi).first());
+  if (meta.doi) {
+    const matches = await db.docs.where('meta.doi').equalsIgnoreCase(meta.doi).toArray();
+    cands.push(matches.find((d) => !d.deletedAt && d.id !== exceptId));
+  }
   if (meta.arxivId) {
     const bare = meta.arxivId.replace(/v\d+$/, '');
-    cands.push(await db.docs.filter((d) => d.meta.arxivId?.replace(/v\d+$/, '') === bare).first());
+    cands.push(await db.docs.filter((d) => !d.deletedAt && d.id !== exceptId && d.meta.arxivId?.replace(/v\d+$/, '') === bare).first());
   }
   if (meta.title && meta.title.length > 12) {
     const t = normalizeTitleForDedupe(meta.title);
-    cands.push(await db.docs.filter((d) => normalizeTitleForDedupe(d.meta.title) === t).first());
+    cands.push(await db.docs.filter((d) => !d.deletedAt && d.id !== exceptId && normalizeTitleForDedupe(d.meta.title) === t).first());
   }
   return cands.find((d) => d && d.id !== exceptId);
+}
+
+/** Group active (non-trashed) duplicate docs by DOI, bare arXiv id, or normalized title. */
+export function findDuplicateGroups(docs: DocRecord[]): DocRecord[][] {
+  const active = docs.filter((d) => !d.deletedAt);
+  const parent = new Map<string, string>();
+  const find = (x: string): string => {
+    const p = parent.get(x) ?? x;
+    if (p !== x) {
+      const r = find(p);
+      parent.set(x, r);
+      return r;
+    }
+    return x;
+  };
+  const union = (a: string, b: string) => {
+    const ra = find(a);
+    const rb = find(b);
+    if (ra !== rb) parent.set(ra, rb);
+  };
+
+  const byKey = new Map<string, string>();
+  const link = (key: string, docId: string) => {
+    const prev = byKey.get(key);
+    if (prev) union(prev, docId);
+    else byKey.set(key, docId);
+  };
+
+  for (const d of active) {
+    parent.set(d.id, d.id);
+    if (d.meta.doi?.trim()) link(`doi:${d.meta.doi.trim().toLowerCase()}`, d.id);
+    if (d.meta.arxivId?.trim()) link(`arxiv:${d.meta.arxivId.trim().toLowerCase().replace(/v\d+$/, '')}`, d.id);
+    if (d.meta.title && d.meta.title.length > 12) {
+      const norm = normalizeTitleForDedupe(d.meta.title);
+      if (norm.length > 12) link(`title:${norm}`, d.id);
+    }
+  }
+
+  const groups = new Map<string, DocRecord[]>();
+  for (const d of active) {
+    const r = find(d.id);
+    const list = groups.get(r) ?? [];
+    list.push(d);
+    groups.set(r, list);
+  }
+  return [...groups.values()]
+    .filter((g) => g.length > 1)
+    .map((g) => g.sort((a, b) => a.addedAt - b.addedAt));
+}
+
+export function findDuplicateDocIds(docs: DocRecord[]): Set<string> {
+  const out = new Set<string>();
+  for (const g of findDuplicateGroups(docs)) for (const d of g) out.add(d.id);
+  return out;
 }
 
 // ---------------------------------------------------------------- metadata lookup
@@ -175,7 +233,17 @@ export async function importPdfBytes(
 ): Promise<ImportResult> {
   const hash = await sha256Hex(buf);
   const same = await db.docs.where('hash').equals(hash).first();
-  if (same) return { docId: same.id, duplicate: true, title: same.title };
+  if (same) {
+    if (same.deletedAt) {
+      await db.docs.update(same.id, {
+        deletedAt: undefined,
+        collectionIds: opts.collectionId && !same.collectionIds.includes(opts.collectionId) ? [...same.collectionIds, opts.collectionId] : same.collectionIds,
+        updatedAt: Date.now(),
+      });
+      return { docId: same.id, duplicate: false, title: same.title };
+    }
+    return { docId: same.id, duplicate: true, title: same.title };
+  }
   // A metadata-only entry for the same work? Attach the PDF to it instead of duplicating.
   const existing = opts.meta ? await findDuplicate(opts.meta) : undefined;
   if (existing && !existing.hasPdf) {
@@ -349,6 +417,15 @@ export async function patchDocs(ids: string[], patch: (d: DocRecord) => Partial<
 
 export const setStatus = (ids: string[], status: ReadStatus) => patchDocs(ids, () => ({ status }));
 export const setStarred = (ids: string[], starred: boolean) => patchDocs(ids, () => ({ starred }));
+export const trashDocs = (ids: string[]) => patchDocs(ids, () => ({ deletedAt: Date.now() }));
+export const restoreDocs = (ids: string[]) => patchDocs(ids, () => ({ deletedAt: undefined }));
+
+export async function emptyTrash(): Promise<number> {
+  const trashed = await db.docs.filter((d) => !!d.deletedAt).primaryKeys();
+  for (const id of trashed) await deleteDocument(id);
+  return trashed.length;
+}
+
 export const addTags = (ids: string[], tags: string[]) =>
   patchDocs(ids, (d) => ({ tags: [...new Set([...d.tags, ...tags.map((t) => t.trim()).filter(Boolean)])] }));
 export const removeTag = (ids: string[], tag: string) => patchDocs(ids, (d) => ({ tags: d.tags.filter((t) => t !== tag) }));
@@ -357,21 +434,93 @@ export const addToCollection = (ids: string[], cid: string) =>
 export const removeFromCollection = (ids: string[], cid: string) =>
   patchDocs(ids, (d) => ({ collectionIds: d.collectionIds.filter((c) => c !== cid) }));
 
-export async function createCollection(name: string) {
+/** Return `rootId` plus all recursive descendant collection IDs (cycle-safe). */
+export function getDescendantCollectionIds(collections: Collection[], rootId: string): Set<string> {
+  const result = new Set<string>([rootId]);
+  const childrenMap = new Map<string, string[]>();
+  for (const c of collections) {
+    if (!c.parentId) continue;
+    const arr = childrenMap.get(c.parentId) ?? [];
+    arr.push(c.id);
+    childrenMap.set(c.parentId, arr);
+  }
+  const queue = [rootId];
+  while (queue.length) {
+    const cur = queue.shift()!;
+    for (const child of childrenMap.get(cur) ?? []) {
+      if (!result.has(child)) {
+        result.add(child);
+        queue.push(child);
+      }
+    }
+  }
+  return result;
+}
+
+/** Flattened collection list ordered as a depth-first tree with display depth. */
+export function flattenCollectionTree(collections: Collection[]): { col: Collection; depth: number; hasChildren: boolean }[] {
+  const validIds = new Set(collections.map((c) => c.id));
+  const byParent = new Map<string | null, Collection[]>();
+  for (const c of collections) {
+    const pid = c.parentId && validIds.has(c.parentId) && c.parentId !== c.id ? c.parentId : null;
+    const arr = byParent.get(pid) ?? [];
+    arr.push(c);
+    byParent.set(pid, arr);
+  }
+  for (const arr of byParent.values()) arr.sort((a, b) => a.order - b.order || a.createdAt - b.createdAt);
+
+  const out: { col: Collection; depth: number; hasChildren: boolean }[] = [];
+  const seen = new Set<string>();
+  const walk = (pid: string | null, depth: number) => {
+    for (const c of byParent.get(pid) ?? []) {
+      if (seen.has(c.id)) continue;
+      seen.add(c.id);
+      const kids = (byParent.get(c.id) ?? []).filter((k) => !seen.has(k.id));
+      out.push({ col: c, depth, hasChildren: kids.length > 0 });
+      walk(c.id, depth + 1);
+    }
+  };
+  walk(null, 0);
+  // Any disconnected cycle nodes fall back to root
+  for (const c of collections) {
+    if (!seen.has(c.id)) out.push({ col: c, depth: 0, hasChildren: false });
+  }
+  return out;
+}
+
+export async function createCollection(name: string, parentId: string | null = null) {
   const last = await db.collections.orderBy('order').last();
-  const c = { id: uid(), name: name.trim() || '新分组', order: (last?.order ?? 0) + 1, createdAt: Date.now() };
+  const now = Date.now();
+  const c: Collection = { id: uid(), name: name.trim() || '新分类', parentId, order: (last?.order ?? 0) + 1, createdAt: now, updatedAt: now };
   await db.collections.add(c);
   return c;
 }
 
+export async function renameCollection(id: string, name: string) {
+  const cleaned = name.trim();
+  if (!cleaned) return;
+  await db.collections.update(id, { name: cleaned, updatedAt: Date.now() });
+}
+
+export async function moveCollection(id: string, newParentId: string | null) {
+  const all = await db.collections.toArray();
+  if (newParentId) {
+    const desc = getDescendantCollectionIds(all, id);
+    if (desc.has(newParentId)) return; // prevent cycles
+  }
+  await db.collections.update(id, { parentId: newParentId, updatedAt: Date.now() });
+}
+
 export async function deleteCollection(id: string) {
+  const all = await db.collections.toArray();
+  const toDelete = getDescendantCollectionIds(all, id);
   await db.transaction('rw', db.docs, db.collections, async () => {
-    await db.collections.delete(id);
+    for (const cid of toDelete) await db.collections.delete(cid);
     await db.docs
-      .where('collectionIds')
-      .equals(id)
+      .filter((d) => d.collectionIds.some((c) => toDelete.has(c)))
       .modify((d) => {
-        d.collectionIds = d.collectionIds.filter((c) => c !== id);
+        d.collectionIds = d.collectionIds.filter((c) => !toDelete.has(c));
+        d.updatedAt = Date.now();
       });
   });
 }
@@ -383,7 +532,16 @@ export async function renameTag(from: string, to: string) {
     .equals(from)
     .modify((d) => {
       d.tags = [...new Set(d.tags.map((t) => (t === from ? name : t)).filter(Boolean))];
+      d.updatedAt = Date.now();
     });
+  const colors = useSettings.getState().tagColors;
+  if (colors?.[from]) {
+    const next = { ...colors };
+    const color = next[from];
+    delete next[from];
+    if (name) next[name] = color;
+    useSettings.getState().set({ tagColors: next });
+  }
 }
 
 // ---------------------------------------------------------------- full-text index

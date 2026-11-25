@@ -16,6 +16,7 @@ const SYNCED_SETTING_KEYS = [
   'prompts',
   'readerFontSize',
   'autoTerms',
+  'tagColors',
 ] as const;
 
 type SyncedSettings = Pick<Settings, (typeof SYNCED_SETTING_KEYS)[number]>;
@@ -186,6 +187,7 @@ function pickSyncedSettings(s: Settings): SyncedSettings {
     prompts: s.prompts,
     readerFontSize: s.readerFontSize,
     autoTerms: s.autoTerms,
+    tagColors: s.tagColors ?? {},
   };
 }
 

@@ -4,6 +4,25 @@ import type { LangCode, ProviderConfig } from '../providers/types';
 
 export type Theme = 'system' | 'light' | 'dark';
 export type SelectionAction = 'popup' | 'auto-translate' | 'none';
+export type TagColor = 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple';
+
+export const TAG_COLORS: { id: TagColor; hex: string; label: string }[] = [
+  { id: 'red', hex: '#ef4444', label: '红（精读核心）' },
+  { id: 'orange', hex: '#f97316', label: '橙（重要参考）' },
+  { id: 'yellow', hex: '#eab308', label: '黄（方法借鉴）' },
+  { id: 'green', hex: '#22c55e', label: '绿（待引用）' },
+  { id: 'blue', hex: '#3b82f6', label: '蓝（组会汇报）' },
+  { id: 'purple', hex: '#a855f7', label: '紫（灵感方向）' },
+];
+
+export const TAG_COLOR_HEX: Record<TagColor, string> = {
+  red: '#ef4444',
+  orange: '#f97316',
+  yellow: '#eab308',
+  green: '#22c55e',
+  blue: '#3b82f6',
+  purple: '#a855f7',
+};
 
 export interface PromptTemplates {
   /** Used for selection + full-text translation with LLMs. Placeholders: {{from}} {{to}} {{glossary}} {{context}} */
@@ -45,6 +64,8 @@ export interface Settings {
   readerFontSize: number;
   /** extract the paper's key terms into its glossary before a fresh full-text translation */
   autoTerms: boolean;
+  /** Zotero-style colored tag assignments (tag name -> color id). */
+  tagColors: Record<string, TagColor>;
 }
 
 /**
@@ -60,6 +81,7 @@ interface SettingsStore extends Settings {
   set: (patch: Partial<Settings>) => void;
   upsertProvider: (p: ProviderConfig) => void;
   removeProvider: (id: string) => void;
+  setTagColor: (tag: string, color: TagColor | null) => void;
 }
 
 export const useSettings = create<SettingsStore>()(
@@ -79,7 +101,15 @@ export const useSettings = create<SettingsStore>()(
       prompts: DEFAULT_PROMPTS,
       readerFontSize: 15,
       autoTerms: true,
+      tagColors: {},
       set: (patch) => set(patch),
+      setTagColor: (tag, color) =>
+        set((s) => {
+          const next = { ...(s.tagColors ?? {}) };
+          if (color) next[tag] = color;
+          else delete next[tag];
+          return { tagColors: next };
+        }),
       upsertProvider: (p) =>
         set((s) => {
           const exists = s.providers.some((x) => x.id === p.id);

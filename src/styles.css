@@ -2245,3 +2245,223 @@ a {
   color: var(--accent);
   font-weight: 600;
 }
+
+/* ---------- Zotero tree sidebar, stackable filter strip, colored tags & trash ---------- */
+.side-add {
+  display: none;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  color: var(--fg-subtle);
+  padding: 2px;
+  border-radius: 4px;
+  line-height: 1;
+  align-items: center;
+  justify-content: center;
+}
+.side-item:hover .side-add,
+.side-item.root-item .side-add {
+  display: inline-flex;
+}
+.side-item:hover .side-add:hover {
+  background: var(--bg-hover);
+  color: var(--fg);
+}
+.side-item.root-item:hover .count {
+  display: inline;
+}
+.side-item.tree-item:hover .count {
+  display: none;
+}
+.tree-caret {
+  width: 16px;
+  height: 16px;
+  border: 0;
+  background: transparent;
+  color: var(--fg-subtle);
+  display: inline-grid;
+  place-items: center;
+  padding: 0;
+  margin-right: -3px;
+  cursor: pointer;
+  border-radius: 3px;
+  flex: none;
+}
+.tree-caret:hover {
+  background: var(--bg-hover);
+  color: var(--fg);
+}
+.tree-caret-pad {
+  width: 13px;
+  flex: none;
+}
+.side-empty-cta {
+  display: block;
+  width: calc(100% - 16px);
+  margin: 4px 8px 6px;
+  padding: 6px 8px;
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg-muted);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.side-empty-cta:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+.side-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 8px 6px;
+}
+.side-item .count.warn {
+  color: var(--danger);
+  font-weight: 600;
+}
+
+.filter-strip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding: 5px 12px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg) 55%, var(--bg-elev));
+}
+.filter-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 7px;
+  background: var(--bg-sunken);
+}
+.filter-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  padding: 0 9px;
+  border-radius: 5px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--fg-muted);
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.filter-pill:hover {
+  color: var(--fg);
+  background: var(--bg-hover);
+}
+.filter-pill.active {
+  background: var(--bg-elev);
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
+  font-weight: 600;
+}
+.filter-n {
+  font-size: 11px;
+  opacity: 0.72;
+  font-weight: 400;
+}
+.filter-sep {
+  width: 1px;
+  height: 16px;
+  background: var(--border);
+  margin: 0 2px;
+}
+
+.trash-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--danger) 8%, var(--bg));
+  color: var(--fg);
+  font-size: 12.5px;
+  flex-wrap: wrap;
+}
+.trash-banner.info {
+  background: color-mix(in srgb, var(--accent) 9%, var(--bg));
+}
+
+.tag-color-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+  margin-right: 2px;
+}
+.tag-color-dot.sm {
+  width: 6px;
+  height: 6px;
+  margin-right: 4px;
+  vertical-align: 1px;
+}
+.doc-note-ico {
+  color: var(--fg-subtle);
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+}
+.dup-badge {
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+  color: var(--danger);
+  font-weight: 600;
+  flex: none;
+}
+.ctx-label {
+  padding: 4px 10px 2px;
+  font-size: 11.5px;
+  color: var(--fg-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ctx-colors {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+}
+.ctx-color-btn {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  cursor: pointer;
+  padding: 0;
+}
+.ctx-color-btn:hover {
+  transform: scale(1.12);
+}
+.ctx-color-btn.active {
+  border-color: var(--fg);
+  box-shadow: 0 0 0 1px var(--bg-elev) inset;
+}
+.ctx-color-clear {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--fg-muted);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+}
+.ctx-color-clear:hover {
+  background: var(--bg-hover);
+  color: var(--fg);
+}

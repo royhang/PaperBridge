@@ -9,16 +9,20 @@ import {
   attachPdfFile,
   enrichMetadata,
   fetchPdfForDoc,
+  flattenCollectionTree,
   removeFromCollection,
   removeTag,
+  restoreDocs,
   setStarred,
   setStatus,
+  trashDocs,
   updateMeta,
 } from '../../library/service';
 import type { ItemType, PaperMeta } from '../../library/types';
 import { openDocTab } from '../../lib/nav';
 import { download } from '../../services/export';
 import { LAYER_PANEL, useEscape } from '../../lib/useEscape';
+import { TAG_COLOR_HEX, useSettings } from '../../store/settings';
 import { useTabs } from '../../store/tabs';
 import { Icon } from '../Icon';
 
@@ -62,8 +66,9 @@ export function DocDetail({ doc, onClose }: { doc: DocRecord; onClose: () => voi
   const fileRef = useRef<HTMLInputElement>(null);
 
   const isOpenInTab = useTabs((s) => s.tabs.some((t) => t.docId === doc.id));
+  const tagColors = useSettings((s) => s.tagColors ?? {});
   const collections = useLiveQuery(() => db.collections.orderBy('order').toArray(), []);
-  const allTags = useLiveQuery(async () => [...new Set((await db.docs.toArray()).flatMap((d) => d.tags))].sort(), []);
+  const allTags = useLiveQuery(async () => [...new Set((await db.docs.toArray()).filter((d) => !d.deletedAt).flatMap((d) => d.tags))].sort(), []);
   const docNotes = useLiveQuery(() => db.notes.where('docId').equals(doc.id).sortBy('pageIndex'), [doc.id]);
 
   useEffect(() => {
@@ -354,6 +359,7 @@ export function DocDetail({ doc, onClose }: { doc: DocRecord; onClose: () => voi
                 <div className="tag-chips">
                   {doc.tags.map((t) => (
                     <span key={t} className="tag-chip">
+                      {tagColors[t] && <span className="tag-color-dot sm" style={{ background: TAG_COLOR_HEX[tagColors[t]] }} />}
                       {t}
                       <button onClick={() => void removeTag([doc.id], t)} title="移除">
                         ×
@@ -384,7 +390,7 @@ export function DocDetail({ doc, onClose }: { doc: DocRecord; onClose: () => voi
                 <div className="field" style={{ marginBottom: 0 }}>
                   <label>分类</label>
                   <div className="tag-chips">
-                    {collections.map((c) => {
+                    {flattenCollectionTree(collections).map(({ col: c, depth }) => {
                       const on = doc.collectionIds.includes(c.id);
                       return (
                         <button
@@ -393,6 +399,7 @@ export function DocDetail({ doc, onClose }: { doc: DocRecord; onClose: () => voi
                           onClick={() => void (on ? removeFromCollection([doc.id], c.id) : addToCollection([doc.id], c.id))}
                         >
                           {on ? '✓ ' : ''}
+                          {depth > 0 ? `${'› '.repeat(depth)}` : ''}
                           {c.name}
                         </button>
                       );
@@ -462,17 +469,41 @@ export function DocDetail({ doc, onClose }: { doc: DocRecord; onClose: () => voi
                   导出 .bib
                 </button>
                 <div className="spacer" />
-                <button
-                  className="btn sm danger"
-                  onClick={() => {
-                    if (confirm(`删除《${doc.title}》及其笔记、翻译缓存？`)) {
-                      void deleteDocument(doc.id);
+                {doc.deletedAt ? (
+                  <>
+                    <button
+                      className="btn sm primary"
+                      onClick={() => {
+                        void restoreDocs([doc.id]);
+                        onClose();
+                      }}
+                    >
+                      还原文献
+                    </button>
+                    <button
+                      className="btn sm danger"
+                      onClick={() => {
+                        if (confirm(`永久删除《${doc.title}》及其笔记、翻译缓存？此操作不可撤销。`)) {
+                          void deleteDocument(doc.id);
+                          onClose();
+                        }
+                      }}
+                    >
+                      彻底删除
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    className="btn sm danger"
+                    onClick={() => {
+                      useTabs.getState().closeTab(doc.id);
+                      void trashDocs([doc.id]);
                       onClose();
-                    }
-                  }}
-                >
-                  删除
-                </button>
+                    }}
+                  >
+                    移入回收站
+                  </button>
+                )}
               </div>
             </div>
           </details>
