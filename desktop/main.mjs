@@ -7,10 +7,22 @@
 import { randomBytes } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { readFileSync, writeFileSync } from 'node:fs';
+import { createServer } from 'node:http';
 import { dirname, extname, join, normalize, sep } from 'node:path';
+import { Readable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 import { fileURLToPath } from 'node:url';
-import { BrowserWindow, Menu, app, ipcMain, protocol, screen, shell } from 'electron';
-import { createProxyServer } from './proxy/server.mjs';
+import { BrowserWindow, Menu, app, ipcMain, net, protocol, screen, shell } from 'electron';
+import {
+  MAX_BODY_BYTES,
+  ProxyError,
+  bodyTooLarge,
+  corsHeaders,
+  errorResponse,
+  parseTarget,
+  responseHeaders,
+  upstreamHeaders,
+} from './proxy/worker.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const WEB = join(here, 'web');
@@ -69,10 +81,101 @@ app.on('open-file', (event, path) => {
   flushFiles();
 });
 
+function writeNodeHeaders(response, status, headers) {
+  const values = Object.fromEntries(headers);
+  const cookies = headers.getSetCookie?.();
+  if (cookies?.length) values['set-cookie'] = cookies;
+  response.writeHead(status, values);
+}
+
+async function readLimitedBody(request, maxBytes) {
+  const chunks = [];
+  let size = 0;
+  for await (const chunk of request) {
+    size += chunk.length;
+    if (size > maxBytes) throw bodyTooLarge();
+    chunks.push(chunk);
+  }
+  return chunks.length ? Buffer.concat(chunks) : undefined;
+}
+
+/**
+ * Local desktop proxy powered by Electron's Chromium network stack (`net.fetch`),
+ * so system proxy / Clash / VPN, Happy Eyeballs IPv4/IPv6 fallback, and OS root
+ * certificates all work automatically on Windows, macOS and Linux.
+ */
 async function startProxy() {
   const token = randomBytes(24).toString('hex');
-  const server = createProxyServer({
-    env: { ALLOWED_HOSTS: '*', ALLOW_ANY_GET: '1', ALLOW_PRIVATE: '1', PROXY_TOKEN: token, MAX_DOWNLOAD_MB: '300' },
+  const server = createServer(async (request, response) => {
+    const controller = new AbortController();
+    response.once('close', () => {
+      if (!response.writableFinished) controller.abort();
+    });
+    request.socket.setNoDelay(true);
+
+    const incoming = new Headers();
+    for (const [name, value] of Object.entries(request.headers)) {
+      if (value !== undefined) incoming.set(name, Array.isArray(value) ? value.join(', ') : value);
+    }
+    const cors = corsHeaders(incoming, request.method === 'OPTIONS');
+
+    try {
+      if (request.method === 'OPTIONS') {
+        writeNodeHeaders(response, 204, cors);
+        response.end();
+        return;
+      }
+      const url = new URL(request.url, 'http://127.0.0.1');
+      if (url.pathname === '/health' && request.method === 'GET') {
+        cors.set('content-type', 'text/plain; charset=utf-8');
+        writeNodeHeaders(response, 200, cors);
+        response.end('ok');
+        return;
+      }
+      if (url.pathname !== '/proxy') throw new ProxyError(404, 'Not found');
+      if (incoming.get('x-proxy-token') !== token) throw new ProxyError(403, 'Invalid or missing proxy token');
+
+      const target = parseTarget(url);
+      if (Number(incoming.get('content-length')) > MAX_BODY_BYTES) throw bodyTooLarge();
+      const method = request.method || 'GET';
+      const hasAuth = incoming.has('authorization') || incoming.has('x-api-key');
+      const isPublicDownload = (method === 'GET' || method === 'HEAD') && !hasAuth;
+      const headers = upstreamHeaders(incoming, isPublicDownload);
+      const body = method === 'GET' || method === 'HEAD' ? undefined : await readLimitedBody(request, MAX_BODY_BYTES);
+
+      const upstream = await net.fetch(target.href, {
+        method,
+        headers,
+        body,
+        redirect: isPublicDownload ? 'follow' : 'manual',
+        signal: controller.signal,
+      });
+
+      const status = upstream.status;
+      const hasBody = method !== 'HEAD' && status !== 204 && status !== 205 && status !== 304 && !!upstream.body;
+      // Electron net.fetch transparently decodes gzip/br/deflate, so strip stale content-encoding/length
+      const outgoing = responseHeaders(upstream.headers, cors, true);
+      writeNodeHeaders(response, status, outgoing);
+      if (hasBody) {
+        response.flushHeaders();
+        await pipeline(Readable.fromWeb(upstream.body), response, { signal: controller.signal });
+      } else {
+        response.end();
+      }
+    } catch (error) {
+      if (response.destroyed) return;
+      if (response.headersSent) {
+        response.destroy(error);
+        return;
+      }
+      const wrapped =
+        error instanceof ProxyError
+          ? error
+          : new ProxyError(502, `Upstream request failed${error?.message ? ` (${error.message})` : ''}`);
+      const failure = errorResponse(wrapped, cors);
+      writeNodeHeaders(response, failure.status, failure.headers);
+      response.end(await failure.text());
+    }
   });
   await new Promise((resolve, reject) => {
     server.once('error', reject);

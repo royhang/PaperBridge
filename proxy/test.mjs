@@ -368,9 +368,13 @@ test('dials the checked DNS answer once per request and checks each redirect tar
       lookup(name, lookupOptions, done) {
         options.lookup(name, lookupOptions, (error, address, family) => {
           if (error) return done(error);
-          dialed.push({ address, family });
-          if (address !== publicAddress) return done(new Error('Unexpected dial address'));
-          done(null, '127.0.0.1', 4);
+          const list = Array.isArray(address) ? address : [{ address, family }];
+          for (const entry of list) {
+            dialed.push({ address: entry.address, family: entry.family });
+            if (entry.address !== publicAddress) return done(new Error('Unexpected dial address'));
+          }
+          if (lookupOptions?.all) done(null, [{ address: '127.0.0.1', family: 4 }]);
+          else done(null, '127.0.0.1', 4);
         });
       },
     }, callback);

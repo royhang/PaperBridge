@@ -50,10 +50,10 @@ function pinnedLookup(resolve, allowPrivate) {
           throw blockedAddress();
         }
       }
-      return addresses[0];
-    }).then(({ address, family }) => {
-      if (options.all) callback(null, [{ address, family }]);
-      else callback(null, address, family);
+      return addresses;
+    }).then(addresses => {
+      if (options.all) callback(null, addresses.map(({ address, family }) => ({ address, family })));
+      else callback(null, addresses[0].address, addresses[0].family);
     }, callback);
   };
 }
@@ -73,7 +73,8 @@ function requestUpstream(target, method, headers, body, signal, resolve, config,
       headers: fields,
       signal,
       agent: false,
-      autoSelectFamily: false,
+      autoSelectFamily: true,
+      autoSelectFamilyAttemptTimeout: 500,
       lookup: pinnedLookup(resolve, config.allowPrivate),
     }, resolveResponse);
     outbound.once('error', reject);
