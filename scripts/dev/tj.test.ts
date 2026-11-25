@@ -1,10 +1,11 @@
 /// <reference types="node" />
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { PDFDocument } from 'pdf-lib';
 import { test } from 'vitest';
 import { readPageText, removeShowOps } from '../../src/pdfout/engine';
-test('tj', async () => {
-  const doc = await PDFDocument.load(readFileSync(process.env.HOME + '/.cache/pb-med/orig.pdf'));
+const pdfPath = `${process.env.HOME ?? ''}/.cache/pb-med/orig.pdf`;
+test.skipIf(!existsSync(pdfPath))('tj', async () => {
+  const doc = await PDFDocument.load(readFileSync(pdfPath));
   const m = readPageText(doc, 5);
   const t = m.ops.filter((o) => /BioMedClip/.test(o.text));
   console.log(t.map((o) => [o.id, o.text, o.raw.slice(0, 120)]));
