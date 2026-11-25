@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { create } from 'zustand';
 import { desktop } from '../lib/desktop';
 import { db, uid } from '../db/db';
@@ -417,7 +417,22 @@ function ProviderEditor({
   const [test, setTest] = useState<{ state: 'idle' | 'running' | 'ok' | 'error'; msg?: string }>({ state: 'idle' });
   const [models, setModels] = useState<string[]>([]);
   const [fetchingModels, setFetchingModels] = useState(false);
+  const [modelMenuOpen, setModelMenuOpen] = useState(false);
+  const [modelFiltering, setModelFiltering] = useState(false);
+  const modelBoxRef = useRef<HTMLDivElement>(null);
   const [proxyWizard, setProxyWizard] = useState<ProxyWizardState | null>(null);
+
+  useEffect(() => {
+    if (!modelMenuOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (modelBoxRef.current && !modelBoxRef.current.contains(e.target as Node)) {
+        setModelMenuOpen(false);
+        setModelFiltering(false);
+      }
+    };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [modelMenuOpen]);
   const [wizardBusy, setWizardBusy] = useState(false);
   const [wizardNote, setWizardNote] = useState('');
   const [cmdCopied, setCmdCopied] = useState(false);
@@ -558,6 +573,8 @@ function ProviderEditor({
       if (!ids.length) setTest({ state: 'error', msg: '没有返回模型列表' });
       else {
         if (!target.model) patch({ model: ids[0] });
+        setModelMenuOpen(true);
+        setModelFiltering(false);
         setTest({ state: 'ok', msg: `已获取 ${ids.length} 个模型` });
       }
     } catch (e) {
@@ -575,6 +592,8 @@ function ProviderEditor({
             if (!ids.length) setTest({ state: 'error', msg: '没有返回模型列表' });
             else {
               if (!next.model) patch({ model: ids[0] });
+              setModelMenuOpen(true);
+              setModelFiltering(false);
               setTest({ state: 'ok', msg: `已自动开启代理，获取到 ${ids.length} 个模型` });
             }
             return;
@@ -600,6 +619,8 @@ function ProviderEditor({
             if (!ids.length) setTest({ state: 'error', msg: '没有返回模型列表' });
             else {
               if (!direct.model) patch({ model: ids[0] });
+              setModelMenuOpen(true);
+              setModelFiltering(false);
               setTest({ state: 'ok', msg: `已获取 ${ids.length} 个模型` });
             }
             return;
@@ -757,35 +778,99 @@ function ProviderEditor({
         </div>
       </div>
 
-      {llm && (
-        <div className="field">
-          <label>模型名称</label>
-          <div className="row">
-            <input
-              className="input"
-              list="model-list"
-              value={cfg.model ?? ''}
-              placeholder="输入或点右侧获取模型列表"
-              onChange={(e) => patch({ model: e.target.value.trim() })}
-            />
-            {cfg.kind === 'openai' && (
-              <button className="btn sm" disabled={fetchingModels} onClick={() => void fetchModels()} title="从接口自动拉取可用模型">
-                {fetchingModels ? '获取中…' : '获取模型'}
-              </button>
-            )}
-            <datalist id="model-list">
-              {models.map((m) => (
-                <option key={m} value={m} />
-              ))}
-            </datalist>
-          </div>
-          {models.length > 0 && (
-            <div className="hint" style={{ marginTop: 2 }}>
-              已获取 {models.length} 个模型，点击输入框下拉选择。
+      {llm && (() => {
+        const q = modelFiltering ? (cfg.model ?? '').trim().toLowerCase() : '';
+        const visibleModels = q ? models.filter((m) => m.toLowerCase().includes(q)) : models;
+        return (
+          <div className="field">
+            <label>模型名称</label>
+            <div className="row">
+              <div className="model-combo" ref={modelBoxRef}>
+                <input
+                  className="input"
+                  style={models.length > 0 ? { paddingRight: 30 } : undefined}
+                  value={cfg.model ?? ''}
+                  placeholder="输入或点右侧获取模型列表"
+                  onFocus={() => {
+                    if (models.length > 0) {
+                      setModelMenuOpen(true);
+                      setModelFiltering(false);
+                    }
+                  }}
+                  onClick={() => {
+                    if (models.length > 0) {
+                      setModelMenuOpen(true);
+                      setModelFiltering(false);
+                    }
+                  }}
+                  onChange={(e) => {
+                    patch({ model: e.target.value.trim() });
+                    if (models.length > 0) {
+                      setModelMenuOpen(true);
+                      setModelFiltering(true);
+                    }
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Escape' && modelMenuOpen) {
+                      e.stopPropagation();
+                      setModelMenuOpen(false);
+                      setModelFiltering(false);
+                    }
+                  }}
+                />
+                {models.length > 0 && (
+                  <button
+                    type="button"
+                    className="model-combo-toggle"
+                    title={modelMenuOpen ? '收起模型列表' : '展开全部模型'}
+                    onMouseDown={(e) => {
+                      e.preventDefault();
+                      setModelMenuOpen((v) => !v);
+                      setModelFiltering(false);
+                    }}
+                  >
+                    <Icon name={modelMenuOpen ? 'up' : 'down'} size={14} />
+                  </button>
+                )}
+                {modelMenuOpen && models.length > 0 && (
+                  <div className="model-menu" role="listbox">
+                    {visibleModels.length === 0 ? (
+                      <div className="model-menu-empty">无匹配模型（可直接使用当前自定义名称）</div>
+                    ) : (
+                      visibleModels.map((m) => (
+                        <button
+                          key={m}
+                          type="button"
+                          className={`model-menu-item${cfg.model === m ? ' active' : ''}`}
+                          onMouseDown={(e) => {
+                            e.preventDefault();
+                            patch({ model: m });
+                            setModelMenuOpen(false);
+                            setModelFiltering(false);
+                          }}
+                        >
+                          <span className="model-menu-name">{m}</span>
+                          {cfg.model === m && <span className="model-menu-chk">✓</span>}
+                        </button>
+                      ))
+                    )}
+                  </div>
+                )}
+              </div>
+              {cfg.kind === 'openai' && (
+                <button className="btn sm" disabled={fetchingModels} onClick={() => void fetchModels()} title="从接口自动拉取可用模型">
+                  {fetchingModels ? '获取中…' : '获取模型'}
+                </button>
+              )}
             </div>
-          )}
-        </div>
-      )}
+            {models.length > 0 && (
+              <div className="hint" style={{ marginTop: 2 }}>
+                已获取 {models.length} 个模型，点击输入框或右侧箭头可直接选择，也可输入关键词筛选。
+              </div>
+            )}
+          </div>
+        );
+      })()}
 
       <label className="check" style={{ marginTop: 4 }}>
         <input type="checkbox" checked={makeDefault} onChange={(e) => setMakeDefault(e.target.checked)} />

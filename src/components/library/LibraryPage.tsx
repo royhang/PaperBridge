@@ -91,8 +91,25 @@ export function LibraryPage() {
   const [busy, setBusy] = useState('');
   const [hits, setHits] = useState<Map<string, TextHit[]> | null>(null);
   const [indexing, setIndexing] = useState<string>('');
+  const [ctxMenu, setCtxMenu] = useState<{ doc: DocRecord; x: number; y: number } | null>(null);
   const hasProvider = useSettings((s) => s.providers.length > 0);
   const openDocIds = useMemo(() => new Set(openTabs.map((t) => t.docId)), [openTabs]);
+
+  useEffect(() => {
+    if (!ctxMenu) return;
+    const close = () => setCtxMenu(null);
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setCtxMenu(null);
+    window.addEventListener('mousedown', close);
+    window.addEventListener('resize', close);
+    window.addEventListener('scroll', close, true);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('mousedown', close);
+      window.removeEventListener('resize', close);
+      window.removeEventListener('scroll', close, true);
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [ctxMenu]);
 
   // full-text search (debounced)
   const q = lib.query.trim();
@@ -292,12 +309,17 @@ export function LibraryPage() {
                 layout={lib.layout}
                 isOpen={openDocIds.has(d.id)}
                 hits={activeHits?.get(d.id)}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  setCtxMenu({ doc: d, x: e.clientX, y: e.clientY });
+                }}
               />
             ))}
           </div>
         </main>
         {selected && <DocDetail doc={selected} onClose={() => lib.select(null)} />}
       </div>
+      {ctxMenu && <DocContextMenu doc={ctxMenu.doc} x={ctxMenu.x} y={ctxMenu.y} onClose={() => setCtxMenu(null)} />}
       {importOpen && (
         <ImportDialog
           collectionId={lib.view.kind === 'collection' ? lib.view.id : undefined}
@@ -353,12 +375,14 @@ function DocRow({
   layout,
   isOpen,
   hits,
+  onContextMenu,
 }: {
   d: DocRecord;
   stripe: boolean;
   layout: 'table' | 'list';
   isOpen: boolean;
   hits?: TextHit[];
+  onContextMenu: (e: React.MouseEvent) => void;
 }) {
   const selected = useLibrary((s) => s.selectedId === d.id);
   const checked = useLibrary((s) => s.checked.includes(d.id));
@@ -380,8 +404,8 @@ function DocRow({
       <div
         className={`doc-row table-row${selected ? ' selected' : ''}${stripe ? ' stripe' : ''}`}
         {...dragProps}
-        onClick={() => select(d.id)}
-        onDoubleClick={() => open(false)}
+        onClick={(e) => open(e.ctrlKey || e.metaKey)}
+        onContextMenu={onContextMenu}
         onAuxClick={(e) => {
           if (e.button === 1 && d.hasPdf) {
             e.preventDefault();
@@ -390,7 +414,7 @@ function DocRow({
         }}
         onKeyDown={(e) => e.key === 'Enter' && open(e.ctrlKey || e.metaKey)}
         tabIndex={0}
-        title="双击在标签页打开 · 中键在后台打开"
+        title="单击打开阅读 · 右键查看详情与更多操作 · 中键后台打开"
       >
         <div className="doc-tr">
           <div className="col-chk">
@@ -462,8 +486,8 @@ function DocRow({
     <div
       className={`doc-row${selected ? ' selected' : ''}`}
       {...dragProps}
-      onClick={() => select(d.id)}
-      onDoubleClick={() => open(false)}
+      onClick={(e) => open(e.ctrlKey || e.metaKey)}
+      onContextMenu={onContextMenu}
       onAuxClick={(e) => {
         if (e.button === 1 && d.hasPdf) {
           e.preventDefault();
@@ -472,6 +496,7 @@ function DocRow({
       }}
       onKeyDown={(e) => e.key === 'Enter' && open(e.ctrlKey || e.metaKey)}
       tabIndex={0}
+      title="单击打开阅读 · 右键查看详情与更多操作 · 中键后台打开"
     >
       <input
         type="checkbox"
@@ -518,8 +543,114 @@ function DocRow({
         ))}
       </div>
       <span className={`status-pill ${d.status}`}>{STATUS_LABEL[d.status]}</span>
-      <button className="btn sm hide-sm" onClick={(e) => (e.stopPropagation(), open(e.ctrlKey || e.metaKey))} disabled={!d.hasPdf}>
-        {isOpen ? '切换' : '阅读'}
+      <button className="btn sm hide-sm" onClick={(e) => (e.stopPropagation(), select(d.id))}>
+        详情
+      </button>
+    </div>
+  );
+}
+
+function DocContextMenu({ doc, x, y, onClose }: { doc: DocRecord; x: number; y: number; onClose: () => void }) {
+  const select = useLibrary((s) => s.select);
+  const left = Math.max(8, Math.min(x, window.innerWidth - 220));
+  const top = Math.max(8, Math.min(y, window.innerHeight - 330));
+
+  const copyCite = (style: 'apa' | 'gbt7714') => {
+    void navigator.clipboard.writeText(formatCitation(doc.meta, style));
+    onClose();
+  };
+
+  return (
+    <div
+      className="ctx-menu"
+      style={{ left, top }}
+      onMouseDown={(e) => e.stopPropagation()}
+      onContextMenu={(e) => e.preventDefault()}
+    >
+      <button
+        className="ctx-item"
+        onClick={() => {
+          select(doc.id);
+          onClose();
+        }}
+      >
+        查看详情 / 编辑题录
+      </button>
+      {doc.hasPdf && (
+        <>
+          <button
+            className="ctx-item"
+            onClick={() => {
+              openDocTab(doc.id, { title: doc.title, background: false });
+              onClose();
+            }}
+          >
+            打开阅读
+          </button>
+          <button
+            className="ctx-item"
+            onClick={() => {
+              openDocTab(doc.id, { title: doc.title, background: true });
+              onClose();
+            }}
+          >
+            在后台标签页打开
+          </button>
+        </>
+      )}
+      <div className="ctx-sep" />
+      <button
+        className="ctx-item"
+        onClick={() => {
+          void setStarred([doc.id], !doc.starred);
+          onClose();
+        }}
+      >
+        {doc.starred ? '取消星标' : '添加星标'}
+      </button>
+      <div className="ctx-status-row">
+        <span className="hint" style={{ fontSize: 11.5 }}>状态</span>
+        {(['unread', 'reading', 'done'] as ReadStatus[]).map((st) => (
+          <button
+            key={st}
+            className={`ctx-pill${doc.status === st ? ' active' : ''}`}
+            onClick={() => {
+              void setStatus([doc.id], st);
+              onClose();
+            }}
+          >
+            {STATUS_LABEL[st]}
+          </button>
+        ))}
+      </div>
+      <div className="ctx-sep" />
+      <button className="ctx-item" onClick={() => copyCite('apa')}>
+        复制引用（APA）
+      </button>
+      <button className="ctx-item" onClick={() => copyCite('gbt7714')}>
+        复制引用（GB/T 7714）
+      </button>
+      <button
+        className="ctx-item"
+        onClick={() => {
+          download(`${doc.title.slice(0, 40) || 'reference'}.bib`, toBibTeXLibrary([{ meta: doc.meta }]), 'text/plain;charset=utf-8');
+          onClose();
+        }}
+      >
+        导出 BibTeX (.bib)
+      </button>
+      <div className="ctx-sep" />
+      <button
+        className="ctx-item danger"
+        onClick={async () => {
+          onClose();
+          if (!confirm(`删除「${doc.title}」及其笔记、翻译缓存？此操作不可撤销。`)) return;
+          useTabs.getState().closeTab(doc.id);
+          if (useLibrary.getState().selectedId === doc.id) select(null);
+          await deleteDocument(doc.id);
+        }}
+      >
+        删除文献
       </button>
     </div>
   );
