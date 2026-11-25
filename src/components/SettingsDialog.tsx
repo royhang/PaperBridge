@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { create } from 'zustand';
 import { desktop } from '../lib/desktop';
 import { db, uid } from '../db/db';
 import { exportLibrary, importLibrary } from '../library/backup';
@@ -51,8 +52,47 @@ const QUICK_PRESET_LABELS = [
 
 const isLLM = (k: ProviderKind) => LLM_KINDS.includes(k);
 
+// In-memory draft store so switching settings tabs or closing & reopening Settings never wipes half-filled inputs.
+interface SettingsDraftStore {
+  editingProvider: { cfg: ProviderConfig; isPreset: boolean; makeDefault: boolean } | null;
+  snippet: string;
+  syncDraft: { serverInput: string; mode: 'login' | 'register'; username: string; password: string; inviteCode: string } | null;
+  setEditingProvider: (v: SettingsDraftStore['editingProvider']) => void;
+  patchEditingCfg: (p: Partial<ProviderConfig>) => void;
+  setEditingMakeDefault: (b: boolean) => void;
+  setSnippet: (s: string) => void;
+  setSyncDraft: (patch: Partial<NonNullable<SettingsDraftStore['syncDraft']>>) => void;
+  clearSyncDraft: () => void;
+}
+
+const useSettingsDraft = create<SettingsDraftStore>()((set) => ({
+  editingProvider: null,
+  snippet: '',
+  syncDraft: null,
+  setEditingProvider: (editingProvider) => set({ editingProvider }),
+  patchEditingCfg: (p) =>
+    set((s) => (s.editingProvider ? { editingProvider: { ...s.editingProvider, cfg: { ...s.editingProvider.cfg, ...p } } } : s)),
+  setEditingMakeDefault: (makeDefault) =>
+    set((s) => (s.editingProvider ? { editingProvider: { ...s.editingProvider, makeDefault } } : s)),
+  setSnippet: (snippet) => set({ snippet }),
+  setSyncDraft: (patch) =>
+    set((s) => ({
+      syncDraft: {
+        serverInput: s.syncDraft?.serverInput ?? useSync.getState().serverUrl,
+        mode: s.syncDraft?.mode ?? 'login',
+        username: s.syncDraft?.username ?? '',
+        password: s.syncDraft?.password ?? '',
+        inviteCode: s.syncDraft?.inviteCode ?? '',
+        ...patch,
+      },
+    })),
+  clearSyncDraft: () => set({ syncDraft: null }),
+}));
+
 export function SettingsDialog({ initial, onClose }: { initial: SettingsSection; onClose: () => void }) {
   const [section, setSection] = useState<SettingsSection>(initial);
+  const hasProviderDraft = useSettingsDraft((s) => !!s.editingProvider || !!s.snippet.trim());
+  const hasSyncDraft = useSettingsDraft((s) => !!s.syncDraft && (!!s.syncDraft.username.trim() || !!s.syncDraft.password));
   useEscape(onClose);
 
   return (
@@ -67,11 +107,15 @@ export function SettingsDialog({ initial, onClose }: { initial: SettingsSection;
         </div>
         <div className="dialog-body">
           <nav className="settings-nav">
-            {SECTIONS.map((s) => (
-              <button key={s.id} className={section === s.id ? 'active' : ''} onClick={() => setSection(s.id)}>
-                {s.label}
-              </button>
-            ))}
+            {SECTIONS.map((s) => {
+              const dot = (s.id === 'providers' && hasProviderDraft) || (s.id === 'sync' && hasSyncDraft);
+              return (
+                <button key={s.id} className={section === s.id ? 'active' : ''} onClick={() => setSection(s.id)}>
+                  {s.label}
+                  {dot && <span className="open-dot" style={{ marginLeft: 6, verticalAlign: 1 }} title="有未保存的填写内容" />}
+                </button>
+              );
+            })}
           </nav>
           <div className="settings-content">
             {section === 'providers' && <ProvidersSection />}
@@ -97,18 +141,21 @@ function ProvidersSection() {
   const setSettings = useSettings((s) => s.set);
   const translateId = useSettings((s) => s.translateProviderId);
   const chatId = useSettings((s) => s.chatProviderId);
-  const [editing, setEditing] = useState<{ cfg: ProviderConfig; isPreset: boolean } | null>(null);
-  const [snippet, setSnippet] = useState('');
+  const editing = useSettingsDraft((s) => s.editingProvider);
+  const setEditing = useSettingsDraft((s) => s.setEditingProvider);
+  const snippet = useSettingsDraft((s) => s.snippet);
+  const setSnippet = useSettingsDraft((s) => s.setSnippet);
   const [pasteMsg, setPasteMsg] = useState('');
   const [copied, setCopied] = useState(false);
 
-  if (editing) return <ProviderEditor initial={editing.cfg} isPreset={editing.isPreset} onDone={() => setEditing(null)} />;
+  if (editing) return <ProviderEditor onDone={() => setEditing(null)} />;
 
   const startPreset = (label: string) => {
     const pr = PROVIDER_PRESETS.find((p) => p.label === label);
     if (!pr) return;
     setEditing({
       isPreset: true,
+      makeDefault: true,
       cfg: {
         id: uid(),
         name: pr.label,
@@ -139,6 +186,7 @@ function ProvidersSection() {
     setPasteMsg('');
     setEditing({
       isPreset: false,
+      makeDefault: true,
       cfg: {
         id: uid(),
         name: parsed.name ?? '自定义 API',
@@ -194,7 +242,7 @@ function ProvidersSection() {
                     设为问答
                   </button>
                 ))}
-              <button className="btn sm" onClick={() => setEditing({ cfg: p, isPreset: false })}>
+              <button className="btn sm" onClick={() => setEditing({ cfg: { ...p }, isPreset: false, makeDefault: false })}>
                 编辑
               </button>
               <button className="icon-btn sm-ico" title="删除" onClick={() => confirm(`删除「${p.name}」？`) && removeProvider(p.id)}>
@@ -258,7 +306,7 @@ function ProvidersSection() {
         })}
         <button
           className="preset-card custom"
-          onClick={() => setEditing({ isPreset: false, cfg: { id: uid(), name: '', kind: 'openai', apiKey: '', model: '' } })}
+          onClick={() => setEditing({ isPreset: false, makeDefault: true, cfg: { id: uid(), name: '', kind: 'openai', apiKey: '', model: '' } })}
         >
           <div className="preset-name">+ 自定义 / 其他</div>
           <div className="hint" style={{ fontSize: 11.5 }}>中转站 / DeepL / 百度 / 有道</div>
@@ -271,15 +319,18 @@ function ProvidersSection() {
   );
 }
 
-function ProviderEditor({ initial, isPreset, onDone }: { initial: ProviderConfig; isPreset: boolean; onDone: () => void }) {
+function ProviderEditor({ onDone }: { onDone: () => void }) {
   const upsert = useSettings((s) => s.upsertProvider);
   const proxyUrl = useSettings((s) => s.proxyUrl);
   const proxyToken = useSettings((s) => s.proxyToken);
   const setSettings = useSettings((s) => s.set);
-  const isNew = !useSettings.getState().providers.some((p) => p.id === initial.id);
-  const [cfg, setCfg] = useState<ProviderConfig>(initial);
+  const editing = useSettingsDraft((s) => s.editingProvider)!;
+  const patch = useSettingsDraft((s) => s.patchEditingCfg);
+  const setMakeDefault = useSettingsDraft((s) => s.setEditingMakeDefault);
+  const { cfg, isPreset, makeDefault } = editing;
+  const existing = useSettings((s) => s.providers.find((p) => p.id === cfg.id));
+  const isNew = !existing;
   const [showKey, setShowKey] = useState(false);
-  const [makeDefault, setMakeDefault] = useState(isNew);
   const [test, setTest] = useState<{ state: 'idle' | 'running' | 'ok' | 'error'; msg?: string; corsHint?: boolean }>({ state: 'idle' });
   const [models, setModels] = useState<string[]>([]);
   const [fetchingModels, setFetchingModels] = useState(false);
@@ -287,19 +338,17 @@ function ProviderEditor({ initial, isPreset, onDone }: { initial: ProviderConfig
   const llm = isLLM(cfg.kind);
   const needsAppId = cfg.kind === 'baidu' || cfg.kind === 'youdao';
   const isDesktop = !!desktop();
-  const patch = (p: Partial<ProviderConfig>) => setCfg((c) => ({ ...c, ...p }));
 
   const applyPreset = (label: string) => {
     const pr = PROVIDER_PRESETS.find((p) => p.label === label);
     if (!pr) return;
-    setCfg((c) => ({
-      ...c,
+    patch({
       name: pr.label,
       kind: pr.kind,
       baseUrl: pr.baseUrl,
       model: pr.model,
       useProxy: !isDesktop && !!pr.note,
-    }));
+    });
     setModels([]);
   };
 
@@ -317,7 +366,7 @@ function ProviderEditor({ initial, isPreset, onDone }: { initial: ProviderConfig
 
   const runTest = async (override?: Partial<ProviderConfig>, saveOnOk = false) => {
     const target = { ...cfg, ...override };
-    if (override) setCfg(target);
+    if (override) patch(override);
     setTest({ state: 'running' });
     try {
       const out = await testProvider(createProvider(target, makeContext(target, proxyUrl, proxyToken)));
@@ -358,7 +407,7 @@ function ProviderEditor({ initial, isPreset, onDone }: { initial: ProviderConfig
         <button className="icon-btn sm-ico" onClick={onDone} title="返回">
           <Icon name="back" size={16} />
         </button>
-        <div style={{ fontWeight: 600 }}>{isNew ? `配置 ${cfg.name || '自定义 API'}` : `编辑「${initial.name}」`}</div>
+        <div style={{ fontWeight: 600 }}>{isNew ? `配置 ${cfg.name || '自定义 API'}` : `编辑「${existing?.name || cfg.name}」`}</div>
         {cfg.baseUrl && isPreset && <span className="hint" style={{ marginLeft: 4 }}>({new URL(cfg.baseUrl).hostname})</span>}
       </div>
 
@@ -574,11 +623,19 @@ function ProviderEditor({ initial, isPreset, onDone }: { initial: ProviderConfig
 
 function SyncSection() {
   const sync = useSync();
-  const [serverInput, setServerInput] = useState(sync.serverUrl);
-  const [mode, setMode] = useState<'login' | 'register'>('login');
-  const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
-  const [inviteCode, setInviteCode] = useState('');
+  const draft = useSettingsDraft((s) => s.syncDraft);
+  const setDraft = useSettingsDraft((s) => s.setSyncDraft);
+  const clearDraft = useSettingsDraft((s) => s.clearSyncDraft);
+  const serverInput = draft?.serverInput ?? sync.serverUrl;
+  const mode = draft?.mode ?? 'login';
+  const username = draft?.username ?? '';
+  const password = draft?.password ?? '';
+  const inviteCode = draft?.inviteCode ?? '';
+  const setServerInput = (v: string) => setDraft({ serverInput: v });
+  const setMode = (v: 'login' | 'register') => setDraft({ mode: v });
+  const setUsername = (v: string) => setDraft({ username: v });
+  const setPassword = (v: string) => setDraft({ password: v });
+  const setInviteCode = (v: string) => setDraft({ inviteCode: v });
   const [serverInfo, setServerInfo] = useState<{ ok: boolean; allowRegister: boolean; inviteRequired: boolean } | null>(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState('');
@@ -610,7 +667,7 @@ function SyncSection() {
         await loginAccount(serverInput, username, password);
         setMsg('✓ 登录成功，已完成数据合并');
       }
-      setPassword('');
+      clearDraft();
     } catch (e) {
       setMsg(e instanceof Error ? e.message : String(e));
     } finally {
