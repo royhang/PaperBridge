@@ -7,6 +7,7 @@ import { TabBar } from './components/TabBar';
 import { desktop } from './lib/desktop';
 import type { SettingsSection } from './lib/nav';
 import { importPdfBytes } from './library/service';
+import { initAutoSync } from './services/sync';
 import { useSettings } from './store/settings';
 import { useTabs } from './store/tabs';
 
@@ -136,6 +137,10 @@ export default function App() {
         useTabs.getState().openDoc(o.id, { title: o.title, background: i < opened.length - 1 });
       });
     });
+  }, []);
+
+  useEffect(() => {
+    initAutoSync();
   }, []);
 
   useEffect(() => {

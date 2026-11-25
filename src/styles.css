@@ -1960,3 +1960,105 @@ a {
     padding: 4px 6px;
   }
 }
+
+/* ---------- Quick API import & Cloud Sync ---------- */
+.quick-paste {
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+}
+.preset-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(145px, 1fr));
+  gap: 8px;
+}
+.preset-card {
+  text-align: left;
+  padding: 9px 10px;
+  border-radius: 7px;
+  border: 1px solid var(--border);
+  background: var(--bg-elev);
+  cursor: pointer;
+  transition: border-color 0.12s, background 0.12s;
+}
+.preset-card:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.preset-card.custom {
+  border-style: dashed;
+}
+.preset-name {
+  font-weight: 600;
+  font-size: 13px;
+  margin-bottom: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.badge.active-badge {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+}
+.sync-card {
+  padding: 12px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+}
+.sync-avatar {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  color: var(--accent);
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+}
+.sync-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  padding: 0 8px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--fg-muted);
+  font-size: 12px;
+  cursor: pointer;
+  margin-right: 2px;
+}
+.sync-pill:hover {
+  background: var(--bg-hover);
+  color: var(--fg);
+}
+.sync-pill.on {
+  color: var(--success);
+  border-color: color-mix(in srgb, var(--success) 35%, transparent);
+  background: color-mix(in srgb, var(--success) 10%, transparent);
+}
+.sync-pill.err {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 40%, transparent);
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+}
+.update-pill {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--accent-fg);
+  font-size: 11.5px;
+  font-weight: 600;
+  text-decoration: none;
+  margin-right: 4px;
+}
+.update-pill:hover {
+  filter: brightness(1.08);
+}

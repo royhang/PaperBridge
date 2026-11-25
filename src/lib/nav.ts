@@ -1,6 +1,6 @@
 import { useTabs } from '../store/tabs';
 
-export type SettingsSection = 'providers' | 'translate' | 'prompts' | 'proxy' | 'general' | 'data';
+export type SettingsSection = 'providers' | 'translate' | 'prompts' | 'sync' | 'proxy' | 'general' | 'data';
 
 export function navigate(hash: string) {
   const docMatch = hash.match(/^#\/doc\/([^/?]+)(?:\?(.*))?/);

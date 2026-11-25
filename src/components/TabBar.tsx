@@ -2,9 +2,13 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { db } from '../db/db';
 import { authorsShort } from '../library/format';
+import { desktop } from '../lib/desktop';
 import { openSettings } from '../lib/nav';
+import { syncNow } from '../services/sync';
+import { checkForUpdates, type UpdateInfo } from '../services/update';
 import { useReader } from '../store/reader';
 import { useSettings } from '../store/settings';
+import { useSync } from '../store/sync';
 import { useTabs } from '../store/tabs';
 import { Icon } from './Icon';
 
@@ -23,12 +27,25 @@ export function TabBar() {
   const runningDocId = useReader((s) => (s.fullTextRunning ? s.docId : null));
   const theme = useSettings((s) => s.theme);
   const setSettings = useSettings((s) => s.set);
+  const syncUser = useSync((s) => s.username);
+  const syncToken = useSync((s) => s.token);
+  const syncStatus = useSync((s) => s.status);
+  const syncProgress = useSync((s) => s.progress);
+  const syncErr = useSync((s) => s.lastError);
+  const lastSyncAt = useSync((s) => s.lastSyncAt);
 
   const stripRef = useRef<HTMLDivElement>(null);
   const [dragIdx, setDragIdx] = useState<number | null>(null);
   const [overIdx, setOverIdx] = useState<number | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+
+  // Desktop client: check GitHub Release silently once every 12h
+  useEffect(() => {
+    if (!desktop()) return;
+    void checkForUpdates().then((info) => info?.hasUpdate && setUpdateInfo(info)).catch(() => {});
+  }, []);
 
   const docMap = useMemo(() => new Map((docs ?? []).map((d) => [d.id, d])), [docs]);
 
@@ -169,6 +186,40 @@ export function TabBar() {
 
       {/* Tab manager menu & global actions */}
       <div className="tabbar-actions">
+        {updateInfo?.hasUpdate && (
+          <a
+            className="update-pill hide-sm"
+            href={updateInfo.url}
+            target="_blank"
+            rel="noreferrer"
+            title={`发现新版本 v${updateInfo.latest}，点击前往下载`}
+          >
+            新版本 v{updateInfo.latest}
+          </a>
+        )}
+        <button
+          className={`sync-pill${syncStatus === 'error' ? ' err' : syncToken ? ' on' : ''}`}
+          title={
+            syncToken
+              ? syncStatus === 'syncing'
+                ? syncProgress || '正在同步…'
+                : syncStatus === 'error'
+                  ? `同步失败：${syncErr}（点击查看）`
+                  : `已登录 @${syncUser}${lastSyncAt ? ` · 上次同步 ${new Date(lastSyncAt).toLocaleTimeString()}` : ''}（点击立即同步，右键打开同步设置）`
+              : '登录账号以在多端共享文献与设置'
+          }
+          onClick={() => {
+            if (!syncToken || syncStatus === 'error') openSettings('sync');
+            else void syncNow();
+          }}
+          onContextMenu={(e) => {
+            e.preventDefault();
+            openSettings('sync');
+          }}
+        >
+          {syncStatus === 'syncing' ? <span className="spinner wtab-spin" /> : <Icon name="cloud" size={14} />}
+          <span className="hide-sm">{syncToken ? (syncStatus === 'syncing' ? '同步中' : `@${syncUser}`) : '云同步'}</span>
+        </button>
         {tabs.length > 0 && (
           <div className="tabbar-menu-wrap" ref={menuRef}>
             <button

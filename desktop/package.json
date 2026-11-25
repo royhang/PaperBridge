@@ -1,7 +1,7 @@
 {
   "name": "paperbridge-desktop",
   "productName": "PaperBridge",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "PaperBridge 文献阅读翻译 — 桌面客户端",
   "license": "MIT",
   "private": true,
@@ -11,6 +11,7 @@
     "prepare-web": "node scripts/prepare.mjs",
     "start": "node scripts/prepare.mjs && electron .",
     "dist:win": "node scripts/prepare.mjs && electron-builder --win zip --x64",
+    "dist:win-setup": "node scripts/prepare.mjs && electron-builder --win nsis --x64",
     "dist:linux": "node scripts/prepare.mjs && electron-builder --linux AppImage --x64",
     "dist:mac": "node scripts/prepare.mjs && electron-builder --mac dmg"
   },
@@ -32,6 +33,13 @@
     "asar": true,
     "win": {
       "signAndEditExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "artifactName": "PaperBridge-Setup-${version}-${arch}.${ext}"
     },
     "linux": {
       "category": "Education"
