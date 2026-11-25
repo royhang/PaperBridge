@@ -192,6 +192,7 @@ function Toolbar({ active }: { active: boolean }) {
         st.setScale(st.scale / 1.1);
       } else if (e.key === 'Escape') {
         st.setSelection(null);
+        st.setPinnedSelection(null);
         window.getSelection()?.removeAllRanges();
       }
     };
@@ -322,10 +323,10 @@ function SelectionToolbar() {
       onMouseDown={(e) => e.preventDefault()}
       onMouseUp={(e) => e.stopPropagation()}
     >
-      <button className="btn" onClick={() => (startJob(sel.text, 'translate', sel.pageIndex), done())}>
+      <button className="btn" onClick={() => (startJob(sel.text, 'translate', sel.pageIndex, sel.rects), done())}>
         <Icon name="translate" size={15} /> 翻译
       </button>
-      <button className="btn" onClick={() => (startJob(sel.text, 'explain', sel.pageIndex), done())}>
+      <button className="btn" onClick={() => (startJob(sel.text, 'explain', sel.pageIndex, sel.rects), done())}>
         <Icon name="sparkle" size={15} /> 解释
       </button>
       <div className="sep" style={{ width: 1, height: 18, background: 'var(--border)', margin: '0 4px' }} />
@@ -341,7 +342,7 @@ function SelectionToolbar() {
         className="btn"
         title="加入术语表"
         onClick={() => {
-          handoffTo('glossary', sel.text);
+          handoffTo('glossary', sel.text, { pageIndex: sel.pageIndex, rects: sel.rects });
           done();
         }}
       >
@@ -351,7 +352,7 @@ function SelectionToolbar() {
         className="btn"
         title="就此提问"
         onClick={() => {
-          handoffTo('chat', sel.text);
+          handoffTo('chat', sel.text, { pageIndex: sel.pageIndex, rects: sel.rects });
           done();
         }}
       >

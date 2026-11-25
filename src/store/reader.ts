@@ -21,6 +21,12 @@ export interface TranslateJob {
   text: string;
   mode: 'translate' | 'explain';
   pageIndex?: number;
+  rects?: NRect[];
+}
+
+export interface PinnedSelection {
+  pageIndex: number;
+  rects: NRect[];
 }
 
 export type ParaStatus = 'pending' | 'running' | 'done' | 'error';
@@ -54,6 +60,8 @@ interface ReaderStore {
   sideTab: SideTab;
   sideOpen: boolean;
   selection: SelectionInfo | null;
+  /** Temporary highlight kept on the PDF after triggering translate/explain/chat/glossary so the user can compare left & right. */
+  pinnedSelection: PinnedSelection | null;
   job: TranslateJob | null;
   /** Paragraph id highlighted on the PDF (hover/click from the parallel panel). */
   focusParagraph: { id: string; pageIndex: number } | null;
@@ -71,7 +79,7 @@ interface ReaderStore {
   /** Text handed from the selection toolbar to the glossary / chat panels. */
   handoff: { target: 'glossary' | 'chat'; text: string; nonce: number } | null;
 
-  handoffTo: (target: 'glossary' | 'chat', text: string) => void;
+  handoffTo: (target: 'glossary' | 'chat', text: string, pin?: PinnedSelection) => void;
   consumeHandoff: () => void;
   open: (docId: string, title: string, pdf: PDFDocumentProxy, page: number, snapshot?: ReaderSnapshot) => void;
   close: () => void;
@@ -80,7 +88,8 @@ interface ReaderStore {
   setSideTab: (t: SideTab) => void;
   toggleSide: () => void;
   setSelection: (s: SelectionInfo | null) => void;
-  startJob: (text: string, mode: TranslateJob['mode'], pageIndex?: number) => void;
+  setPinnedSelection: (p: PinnedSelection | null) => void;
+  startJob: (text: string, mode: TranslateJob['mode'], pageIndex?: number, rects?: NRect[]) => void;
   setFocusParagraph: (f: ReaderStore['focusParagraph']) => void;
   scrollTo: (pageIndex: number, y?: number) => void;
   setParaState: (id: string, s: ParaState) => void;
@@ -102,6 +111,7 @@ export const useReader = create<ReaderStore>()((set) => ({
   sideTab: 'translate',
   sideOpen: true,
   selection: null,
+  pinnedSelection: null,
   job: null,
   focusParagraph: null,
   scrollTarget: null,
@@ -113,7 +123,13 @@ export const useReader = create<ReaderStore>()((set) => ({
   viewMode: 'original',
   handoff: null,
 
-  handoffTo: (target, text) => set({ handoff: { target, text, nonce: ++jobSeq }, sideTab: target, sideOpen: true }),
+  handoffTo: (target, text, pin) =>
+    set((s) => ({
+      handoff: { target, text, nonce: ++jobSeq },
+      sideTab: target,
+      sideOpen: true,
+      pinnedSelection: pin ?? s.pinnedSelection,
+    })),
   consumeHandoff: () => set({ handoff: null }),
   open: (docId, title, pdf, page, snapshot) =>
     set((s) => {
@@ -128,6 +144,7 @@ export const useReader = create<ReaderStore>()((set) => ({
         sideTab: snapshot?.sideTab ?? s.sideTab,
         sideOpen: snapshot?.sideOpen ?? s.sideOpen,
         selection: null,
+        pinnedSelection: null,
         job: null,
         paraStates: keepTrans ? snapshot.paraStates : {},
         pageStates: keepTrans ? snapshot.pageStates : {},
@@ -136,14 +153,31 @@ export const useReader = create<ReaderStore>()((set) => ({
         scrollTarget: page > 0 ? { pageIndex: page, nonce: ++scrollSeq } : null,
       };
     }),
-  close: () => set({ docId: null, pdf: null, title: '', selection: null, job: null, paraStates: {}, pageStates: {}, fullTextRunning: false }),
+  close: () =>
+    set({
+      docId: null,
+      pdf: null,
+      title: '',
+      selection: null,
+      pinnedSelection: null,
+      job: null,
+      paraStates: {},
+      pageStates: {},
+      fullTextRunning: false,
+    }),
   setScale: (scale) => set({ scale: Math.min(4, Math.max(0.5, Math.round(scale * 100) / 100)) }),
   setCurrentPage: (currentPage) => set({ currentPage }),
   setSideTab: (sideTab) => set({ sideTab, sideOpen: true }),
   toggleSide: () => set((s) => ({ sideOpen: !s.sideOpen })),
   setSelection: (selection) => set({ selection }),
-  startJob: (text, mode, pageIndex) =>
-    set({ job: { id: ++jobSeq, text, mode, pageIndex }, sideTab: 'translate', sideOpen: true }),
+  setPinnedSelection: (pinnedSelection) => set({ pinnedSelection }),
+  startJob: (text, mode, pageIndex, rects) =>
+    set((s) => ({
+      job: { id: ++jobSeq, text, mode, pageIndex, rects },
+      sideTab: 'translate',
+      sideOpen: true,
+      pinnedSelection: pageIndex !== undefined && rects?.length ? { pageIndex, rects } : s.pinnedSelection,
+    })),
   setFocusParagraph: (focusParagraph) => set({ focusParagraph }),
   scrollTo: (pageIndex, y) => set({ scrollTarget: { pageIndex, y, nonce: ++scrollSeq } }),
   setParaState: (id, st) => set((s) => ({ paraStates: { ...s.paraStates, [id]: st } })),

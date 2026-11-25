@@ -144,6 +144,7 @@ export function PdfView() {
       const sel = window.getSelection();
       if (!sel || sel.isCollapsed || sel.rangeCount === 0) {
         setSelection(null);
+        if (useReader.getState().pinnedSelection) useReader.getState().setPinnedSelection(null);
         return;
       }
       const text = cleanSelectedText(sel.toString());
@@ -173,16 +174,17 @@ export function PdfView() {
         return;
       }
       const [pageIndex, rects] = [...byPage.entries()].sort((a, b) => b[1].length - a[1].length)[0];
+      const merged = mergeRects(rects);
       const box = range.getBoundingClientRect();
       setSelection({
         text,
         pageIndex,
-        rects: mergeRects(rects),
+        rects: merged,
         multiPage: byPage.size > 1,
         anchor: { x: box.left + box.width / 2, y: box.top },
       });
       if (useSettings.getState().selectionAction === 'auto-translate') {
-        useReader.getState().startJob(text, 'translate', pageIndex);
+        useReader.getState().startJob(text, 'translate', pageIndex, merged);
       }
     }, 10);
   }, [setSelection]);
@@ -378,11 +380,29 @@ const PageView = memo(function PageView({ index, size, scale, pdf, docId, contai
           )}
         </div>
       )}
+      <PinnedSelectionLayer index={index} />
       <div ref={textRef} />
       {visible && <ParagraphLayer pdf={pdf} docId={docId} index={index} scale={scale} />}
     </div>
   );
 });
+
+/** Keeps the selected text visibly highlighted on the PDF while reading its translation / explanation / chat reply. */
+function PinnedSelectionLayer({ index }: { index: number }) {
+  const pin = useReader((s) => (s.pinnedSelection?.pageIndex === index ? s.pinnedSelection : null));
+  if (!pin?.rects.length) return null;
+  return (
+    <div className="hl-layer sel-pin-layer">
+      {pin.rects.map((r, j) => (
+        <div
+          key={j}
+          className="hl sel-pin"
+          style={{ left: `${r.x * 100}%`, top: `${r.y * 100}%`, width: `${r.w * 100}%`, height: `${r.h * 100}%` }}
+        />
+      ))}
+    </div>
+  );
+}
 
 /** Focus outline for the paragraph hovered in the panel. */
 function ParagraphLayer({ pdf, docId, index, scale }: { pdf: PDFDocumentProxy; docId: string; index: number; scale: number }) {

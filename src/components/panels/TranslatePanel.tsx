@@ -118,11 +118,29 @@ export function TranslatePanel() {
 function EntryView({ entry, compact, onRetry }: { entry: Entry; compact?: boolean; onRetry: () => void }) {
   const [showSrc, setShowSrc] = useState(!compact);
   const noProvider = entry.status === 'error' && /尚未配置/.test(entry.error ?? '');
+  const canLocate = entry.job.pageIndex !== undefined;
+  const locate = () => {
+    if (entry.job.pageIndex === undefined) return;
+    const st = useReader.getState();
+    if (entry.job.rects?.length) {
+      st.setPinnedSelection({ pageIndex: entry.job.pageIndex, rects: entry.job.rects });
+    }
+    st.scrollTo(entry.job.pageIndex);
+  };
   return (
     <div>
       <div className="row" style={{ marginBottom: 6 }}>
         <span className="badge">{entry.job.mode === 'explain' ? '解释' : '翻译'}</span>
-        {entry.job.pageIndex !== undefined && <span className="hint">p.{entry.job.pageIndex + 1}</span>}
+        {canLocate && (
+          <button
+            className="btn ghost sm"
+            style={{ height: 20, padding: '0 5px', fontSize: 11.5 }}
+            title="在左侧 PDF 中定位并高亮此选区"
+            onClick={locate}
+          >
+            p.{entry.job.pageIndex! + 1}
+          </button>
+        )}
         {entry.provider && <span className="hint">· {entry.provider}</span>}
         <div className="spacer" />
         {entry.status === 'running' && <span className="spinner" />}

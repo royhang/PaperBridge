@@ -459,6 +459,11 @@ a {
 .hl.blue { background: var(--hl-blue); }
 .hl.pink { background: var(--hl-pink); }
 .hl.purple { background: var(--hl-purple); }
+.hl.sel-pin {
+  background: rgba(37, 99, 235, 0.22);
+  box-shadow: inset 0 -2px 0 rgba(37, 99, 235, 0.72);
+  border-radius: 2px;
+}
 .para-box {
   position: absolute;
   border-radius: 3px;

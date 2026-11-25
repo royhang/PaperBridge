@@ -503,8 +503,8 @@ function ProviderEditor({ initial, isPreset, onDone }: { initial: ProviderConfig
             <>
               <label className="check" style={{ marginBottom: cfg.useProxy ? 8 : 0 }}>
                 <input type="checkbox" checked={!!cfg.useProxy} onChange={(e) => patch({ useProxy: e.target.checked })} />
-                通过跨域代理发送请求
-                <span className="hint">（浏览器直连报 CORS 错误时勾选）</span>
+                通过中转代理请求（解决浏览器跨域拦截）
+                <span className="hint">（仅当网页版直连报 CORS / Failed to fetch 时需要，如学校接口、DeepL、百度；OpenAI/DeepSeek 等通常无需勾选）</span>
               </label>
               {cfg.useProxy && (
                 <div className="grid2">
