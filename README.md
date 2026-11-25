@@ -1,6 +1,21 @@
 # PaperBridge · 开源文献阅读翻译工具
 
-在浏览器里读论文：**划词翻译、全文双语对照、AI 解释与问答、高亮笔记、术语表**。接入你自己的 API，所有文献、笔记和 Key 都只保存在本地浏览器。
+在浏览器或桌面客户端里读论文：**保留原排版的全文双语翻译、多文献标签页切换、划词翻译高亮对照、AI 解释与问答、高亮笔记、术语表、类 Zotero 三栏文献库与可选多端云同步**。接入你自己的 API，默认本地优先，所有文献、笔记和 Key 都只保存在本机。
+
+> 在线体验：[https://royhang.github.io/PaperBridge/](https://royhang.github.io/PaperBridge/) · Windows 便携版下载：[GitHub Releases](https://github.com/royhang/PaperBridge/releases)
+
+## 界面预览
+
+### 保版式双栏全文翻译 + 多文献标签页 + 逐段对照
+![保版式双栏全文翻译与多文献标签页](docs/screenshots/reader-dual.png)
+
+### 划词翻译与左侧持续高亮对照
+![划词翻译与左侧选区持续高亮](docs/screenshots/reader-select-pin.png)
+
+### 类 Zotero 7 三栏文献库（浅色 / 深色模式）
+| 浅色模式 | 深色模式 |
+| --- | --- |
+| ![类 Zotero 7 三栏文献库浅色模式](docs/screenshots/library-zotero.png) | ![类 Zotero 7 三栏文献库深色模式](docs/screenshots/library-dark.png) |
 
 ## 功能
 
