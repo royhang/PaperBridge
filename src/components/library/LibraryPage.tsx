@@ -18,16 +18,27 @@ import {
   setStatus,
   type TextHit,
 } from '../../library/service';
-import { navigate, openSettings } from '../../lib/nav';
+import { openDocTab, openSettings } from '../../lib/nav';
 import { download } from '../../services/export';
 import { useLibrary, type LibraryView, type SortKey } from '../../store/library';
 import { useSettings } from '../../store/settings';
+import { useTabs } from '../../store/tabs';
 import { Icon, type IconName } from '../Icon';
 import { DocDetail } from './DocDetail';
 import { ImportDialog } from './ImportDialog';
 
 const DRAG_TYPE = 'application/x-paperbridge-docs';
+const SIDE_WIDTH_KEY = 'paperbridge.libSideWidth';
 
+function loadSideWidth() {
+  try {
+    const v = Number(localStorage.getItem(SIDE_WIDTH_KEY));
+    if (v >= 170 && v <= 360) return v;
+  } catch {
+    /* ignore */
+  }
+  return 228;
+}
 
 function matchesView(d: DocRecord, v: LibraryView): boolean {
   switch (v.kind) {
@@ -74,12 +85,14 @@ const sorters: Record<SortKey, (a: DocRecord, b: DocRecord) => number> = {
 export function LibraryPage() {
   const docs = useLiveQuery(() => db.docs.toArray(), []);
   const lib = useLibrary();
+  const openTabs = useTabs((s) => s.tabs);
   const [importOpen, setImportOpen] = useState(false);
   const [dropOver, setDropOver] = useState(false);
   const [busy, setBusy] = useState('');
   const [hits, setHits] = useState<Map<string, TextHit[]> | null>(null);
   const [indexing, setIndexing] = useState<string>('');
   const hasProvider = useSettings((s) => s.providers.length > 0);
+  const openDocIds = useMemo(() => new Set(openTabs.map((t) => t.docId)), [openTabs]);
 
   // full-text search (debounced)
   const q = lib.query.trim();
@@ -130,32 +143,20 @@ export function LibraryPage() {
     if (lastId) lib.select(lastId);
   };
 
+  const allShownChecked = shown.length > 0 && shown.every((d) => lib.checked.includes(d.id));
+  const sortArrow = (k: SortKey) => (lib.sort === k ? (lib.sortDesc ? ' ↓' : ' ↑') : '');
+
   return (
     <div className="lib">
-      <header className="lib-header">
-        <div className="brand">
-          <div className="brand-mark">译</div>
-          <span className="hide-sm">PaperBridge</span>
-        </div>
-        <nav className="lib-tabs">
-          <button className="active">文献</button>
-          <button onClick={() => navigate('#/notes')}>笔记</button>
-        </nav>
-        <div className="spacer" />
-        <ThemeButton />
-        <button className="btn" onClick={() => openSettings('providers')}>
-          <Icon name="settings" size={16} /> <span className="hide-sm">设置</span>
-        </button>
-      </header>
       {!hasProvider && (
-        <div className="setup-banner" style={{ margin: '12px 16px 0' }}>
-          <Icon name="sparkle" />
+        <div className="setup-banner" style={{ margin: '8px 12px 0' }}>
+          <Icon name="sparkle" size={16} />
           <div>
-            <div style={{ fontWeight: 600 }}>先接入一个翻译 / 大模型 API</div>
-            <div className="hint">OpenAI 兼容接口、Claude、Gemini、DeepL、百度、有道等。Key 只保存在本机浏览器。</div>
+            <div style={{ fontWeight: 600, fontSize: 13 }}>先接入一个翻译 / 大模型 API</div>
+            <div className="hint">OpenAI 兼容接口、Claude、Gemini、DeepL、百度、有道等。Key 只保存在本机。</div>
           </div>
           <div className="spacer" />
-          <button className="btn primary" onClick={() => openSettings('providers')}>
+          <button className="btn sm primary" onClick={() => openSettings('providers')}>
             添加 API
           </button>
         </div>
@@ -178,10 +179,31 @@ export function LibraryPage() {
             void importFiles([...e.dataTransfer.files]);
           }}
         >
+          {/* Zotero-style compact action & search toolbar */}
           <div className="lib-toolbar">
+            <button className="btn sm primary" onClick={() => setImportOpen(true)} title="导入 PDF / DOI / arXiv / BibTeX">
+              <Icon name="plus" size={14} /> 导入
+            </button>
             <MobileViewSelect docs={docs ?? []} />
+            <div className="view-switch hide-sm" role="group" aria-label="列表样式">
+              <button
+                className={lib.layout === 'table' ? 'active' : ''}
+                title="Zotero 表格视图"
+                onClick={() => lib.setLayout('table')}
+              >
+                <Icon name="table" size={13} />
+              </button>
+              <button
+                className={lib.layout === 'list' ? 'active' : ''}
+                title="详细卡片视图"
+                onClick={() => lib.setLayout('list')}
+              >
+                <Icon name="list" size={13} />
+              </button>
+            </div>
+            <div className="spacer" />
             <div className="search">
-              <Icon name="search" size={15} />
+              <Icon name="search" size={14} />
               <input
                 className="input"
                 placeholder={lib.fullText ? '搜索标题、作者、正文、译文、笔记…' : '搜索标题、作者、期刊、标签、DOI…'}
@@ -189,47 +211,88 @@ export function LibraryPage() {
                 onChange={(e) => lib.setQuery(e.target.value)}
               />
             </div>
-            <label className="check" style={{ margin: 0 }} title="同时搜索 PDF 正文、译文和笔记">
+            <label className="check" style={{ margin: 0, fontSize: 12.5 }} title="同时搜索 PDF 正文、译文和笔记">
               <input type="checkbox" checked={lib.fullText} onChange={(e) => void enableFullText(e.target.checked)} />
               全文
             </label>
-            <select className="select" style={{ width: 'auto' }} value={lib.sort} onChange={(e) => lib.setSort(e.target.value as SortKey)} title="排序">
+            <select
+              className="select sm"
+              value={lib.sort}
+              onChange={(e) => lib.setSort(e.target.value as SortKey)}
+              title="排序"
+            >
               <option value="lastOpened">最近阅读</option>
               <option value="added">添加时间</option>
               <option value="title">标题</option>
               <option value="year">年份</option>
               <option value="author">第一作者</option>
             </select>
-            <button className="icon-btn" title={lib.sortDesc ? '降序' : '升序'} onClick={() => lib.setSort(lib.sort)}>
-              <Icon name={lib.sortDesc ? 'down' : 'up'} />
+            <button className="icon-btn sm-ico" title={lib.sortDesc ? '降序' : '升序'} onClick={() => lib.setSort(lib.sort)}>
+              <Icon name={lib.sortDesc ? 'down' : 'up'} size={15} />
             </button>
-            <div className="spacer" />
-            <button className="btn primary" onClick={() => setImportOpen(true)}>
-              <Icon name="plus" size={15} /> 导入
-            </button>
+            <span className="hint hide-sm" style={{ whiteSpace: 'nowrap' }}>
+              {shown.length} 篇
+            </span>
           </div>
+
           {(busy || indexing) && (
-            <div className="hint row" style={{ padding: '0 16px 8px' }}>
+            <div className="hint row" style={{ padding: '4px 12px 6px' }}>
               <span className="spinner" /> {busy || indexing}
             </div>
           )}
           {lib.checked.length > 0 && <BulkBar docs={docs ?? []} />}
-          <div className="doc-list">
+
+          {/* Zotero multi-column header (in table mode) */}
+          {lib.layout === 'table' && shown.length > 0 && (
+            <div className="doc-thead hide-sm">
+              <div className="col-chk">
+                <input
+                  type="checkbox"
+                  checked={allShownChecked}
+                  onChange={() => lib.setChecked(allShownChecked ? [] : shown.map((d) => d.id))}
+                  aria-label="全选"
+                />
+              </div>
+              <div className="col-star" />
+              <div className="col-title sortable" onClick={() => lib.setSort('title')}>
+                标题{sortArrow('title')}
+              </div>
+              <div className="col-author sortable" onClick={() => lib.setSort('author')}>
+                作者{sortArrow('author')}
+              </div>
+              <div className="col-venue">期刊 / 会议</div>
+              <div className="col-year sortable" onClick={() => lib.setSort('year')}>
+                年份{sortArrow('year')}
+              </div>
+              <div className="col-status sortable" onClick={() => lib.setSort('lastOpened')}>
+                状态{sortArrow('lastOpened')}
+              </div>
+            </div>
+          )}
+
+          <div className={`doc-list${lib.layout === 'table' ? ' mode-table' : ' mode-list'}`}>
             {docs && shown.length === 0 && (
               <div className="empty">
                 {docs.length === 0 ? (
                   <>
                     <Icon name="upload" size={28} />
-                    <p>把 PDF 拖到这里，或点击右上角「导入」。</p>
-                    <p className="hint">也可以粘贴 DOI / arXiv 链接，或导入 Zotero 导出的 BibTeX。所有数据只保存在本机浏览器。</p>
+                    <p>把 PDF 拖到这里，或点击左上角「导入」。</p>
+                    <p className="hint">也可以粘贴 DOI / arXiv 链接，或导入 Zotero 导出的 BibTeX。所有数据只保存在本机。</p>
                   </>
                 ) : (
                   '没有符合条件的文献'
                 )}
               </div>
             )}
-            {shown.map((d) => (
-              <DocRow key={d.id} d={d} hits={activeHits?.get(d.id)} />
+            {shown.map((d, idx) => (
+              <DocRow
+                key={d.id}
+                d={d}
+                stripe={idx % 2 === 1}
+                layout={lib.layout}
+                isOpen={openDocIds.has(d.id)}
+                hits={activeHits?.get(d.id)}
+              />
             ))}
           </div>
         </main>
@@ -255,7 +318,7 @@ function MobileViewSelect({ docs }: { docs: DocRecord[] }) {
   const value = `${view.kind}:${view.id ?? ''}`;
   return (
     <select
-      className="select show-sm"
+      className="select sm show-sm"
       style={{ width: 'auto', maxWidth: 140 }}
       value={value}
       onChange={(e) => {
@@ -284,38 +347,130 @@ function MobileViewSelect({ docs }: { docs: DocRecord[] }) {
   );
 }
 
-function ThemeButton() {
-  const theme = useSettings((s) => s.theme);
-  const set = useSettings((s) => s.set);
-  return (
-    <button
-      className="icon-btn"
-      title="切换主题"
-      onClick={() => set({ theme: theme === 'dark' ? 'light' : theme === 'light' ? 'system' : 'dark' })}
-    >
-      <Icon name={theme === 'dark' ? 'moon' : 'sun'} />
-    </button>
-  );
-}
-
-function DocRow({ d, hits }: { d: DocRecord; hits?: TextHit[] }) {
+function DocRow({
+  d,
+  stripe,
+  layout,
+  isOpen,
+  hits,
+}: {
+  d: DocRecord;
+  stripe: boolean;
+  layout: 'table' | 'list';
+  isOpen: boolean;
+  hits?: TextHit[];
+}) {
   const selected = useLibrary((s) => s.selectedId === d.id);
   const checked = useLibrary((s) => s.checked.includes(d.id));
   const select = useLibrary((s) => s.select);
   const toggleCheck = useLibrary((s) => s.toggleCheck);
-  const open = () => (d.hasPdf ? navigate(`#/doc/${d.id}`) : select(d.id));
+  const open = (background = false) => (d.hasPdf ? openDocTab(d.id, { title: d.title, background }) : select(d.id));
+
+  const dragProps = {
+    draggable: true,
+    onDragStart: (e: React.DragEvent) => {
+      const ids = useLibrary.getState().checked.includes(d.id) ? useLibrary.getState().checked : [d.id];
+      e.dataTransfer.setData(DRAG_TYPE, JSON.stringify(ids));
+      e.dataTransfer.effectAllowed = 'copy';
+    },
+  };
+
+  if (layout === 'table') {
+    return (
+      <div
+        className={`doc-row table-row${selected ? ' selected' : ''}${stripe ? ' stripe' : ''}`}
+        {...dragProps}
+        onClick={() => select(d.id)}
+        onDoubleClick={() => open(false)}
+        onAuxClick={(e) => {
+          if (e.button === 1 && d.hasPdf) {
+            e.preventDefault();
+            open(true);
+          }
+        }}
+        onKeyDown={(e) => e.key === 'Enter' && open(e.ctrlKey || e.metaKey)}
+        tabIndex={0}
+        title="双击在标签页打开 · 中键在后台打开"
+      >
+        <div className="doc-tr">
+          <div className="col-chk">
+            <input
+              type="checkbox"
+              checked={checked}
+              onClick={(e) => e.stopPropagation()}
+              onChange={() => toggleCheck(d.id)}
+              aria-label="选择"
+            />
+          </div>
+          <div className="col-star">
+            <button
+              className={`star${d.starred ? ' on' : ''}`}
+              title={d.starred ? '取消星标' : '星标'}
+              onClick={(e) => {
+                e.stopPropagation();
+                void setStarred([d.id], !d.starred);
+              }}
+            >
+              {d.starred ? '★' : '☆'}
+            </button>
+          </div>
+          <div className="col-title">
+            <span className={`doc-ico${d.hasPdf ? ' has-pdf' : ''}`} title={d.hasPdf ? '含 PDF 附件' : '无 PDF 附件'}>
+              <Icon name={d.hasPdf ? 'filePdf' : 'nofile'} size={14} />
+            </span>
+            {isOpen && <span className="open-dot" title="已在顶部标签页打开" />}
+            <span className="doc-title-text">{d.title}</span>
+            {d.tags.length > 0 && (
+              <span className="inline-tags hide-sm">
+                {d.tags.slice(0, 2).map((t) => (
+                  <span key={t} className="tag-chip mini">
+                    {t}
+                  </span>
+                ))}
+                {d.tags.length > 2 && <span className="hint">+{d.tags.length - 2}</span>}
+              </span>
+            )}
+          </div>
+          <div className="col-author hide-sm" title={authorsShort(d.meta.authors)}>
+            {authorsShort(d.meta.authors) || '—'}
+          </div>
+          <div className="col-venue hide-sm" title={d.meta.venue ?? ''}>
+            {d.meta.venue || '—'}
+          </div>
+          <div className="col-year hide-sm">{d.meta.year ?? '—'}</div>
+          <div className="col-status">
+            <span className={`status-pill ${d.status}`}>{STATUS_LABEL[d.status]}</span>
+          </div>
+        </div>
+        {hits && hits.length > 0 && (
+          <div className="row-hits">
+            {hits.map((h, i) => (
+              <div key={i} className="hit">
+                <span className="badge">{h.source === 'original' ? `p.${h.page + 1}` : h.source === 'translation' ? '译文' : '笔记'}</span>{' '}
+                {h.snippet.slice(0, h.at)}
+                <mark>{h.snippet.slice(h.at, h.at + useLibrary.getState().query.trim().length)}</mark>
+                {h.snippet.slice(h.at + useLibrary.getState().query.trim().length)}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div
       className={`doc-row${selected ? ' selected' : ''}`}
-      draggable
-      onDragStart={(e) => {
-        const ids = useLibrary.getState().checked.includes(d.id) ? useLibrary.getState().checked : [d.id];
-        e.dataTransfer.setData(DRAG_TYPE, JSON.stringify(ids));
-        e.dataTransfer.effectAllowed = 'copy';
-      }}
+      {...dragProps}
       onClick={() => select(d.id)}
-      onDoubleClick={open}
-      onKeyDown={(e) => e.key === 'Enter' && open()}
+      onDoubleClick={() => open(false)}
+      onAuxClick={(e) => {
+        if (e.button === 1 && d.hasPdf) {
+          e.preventDefault();
+          open(true);
+        }
+      }}
+      onKeyDown={(e) => e.key === 'Enter' && open(e.ctrlKey || e.metaKey)}
       tabIndex={0}
     >
       <input
@@ -337,6 +492,7 @@ function DocRow({ d, hits }: { d: DocRecord; hits?: TextHit[] }) {
       </button>
       <div className="doc-main">
         <div className="doc-title">
+          {isOpen && <span className="open-dot" title="已在顶部标签页打开" />}
           {d.title}
           {!d.hasPdf && <span className="badge">无 PDF</span>}
         </div>
@@ -362,8 +518,8 @@ function DocRow({ d, hits }: { d: DocRecord; hits?: TextHit[] }) {
         ))}
       </div>
       <span className={`status-pill ${d.status}`}>{STATUS_LABEL[d.status]}</span>
-      <button className="btn sm hide-sm" onClick={(e) => (e.stopPropagation(), open())} disabled={!d.hasPdf}>
-        阅读
+      <button className="btn sm hide-sm" onClick={(e) => (e.stopPropagation(), open(e.ctrlKey || e.metaKey))} disabled={!d.hasPdf}>
+        {isOpen ? '切换' : '阅读'}
       </button>
     </div>
   );
@@ -377,12 +533,45 @@ function Sidebar({ docs }: { docs: DocRecord[] }) {
   const [name, setName] = useState('');
   const [over, setOver] = useState<string | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
+  const [tagFilter, setTagFilter] = useState('');
+  const [width, setWidth] = useState(loadSideWidth);
+  const [dragging, setDragging] = useState(false);
+  const startRef = useRef<{ x: number; w: number } | null>(null);
+
+  useEffect(() => {
+    if (!dragging) return;
+    const move = (e: PointerEvent) => {
+      const s = startRef.current;
+      if (!s) return;
+      setWidth(Math.max(170, Math.min(360, s.w + (e.clientX - s.x))));
+    };
+    const up = () => setDragging(false);
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+    return () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+    };
+  }, [dragging]);
+
+  useEffect(() => {
+    if (dragging) return;
+    try {
+      localStorage.setItem(SIDE_WIDTH_KEY, String(Math.round(width)));
+    } catch {
+      /* ignore */
+    }
+  }, [dragging, width]);
 
   const tags = useMemo(() => {
     const m = new Map<string, number>();
     docs.forEach((d) => d.tags.forEach((t) => m.set(t, (m.get(t) ?? 0) + 1)));
-    return [...m.entries()].sort((a, b) => a[0].localeCompare(b[0], 'zh'));
-  }, [docs]);
+    const q = tagFilter.trim().toLowerCase();
+    return [...m.entries()]
+      .filter(([t]) => !q || t.toLowerCase().includes(q))
+      .sort((a, b) => a[0].localeCompare(b[0], 'zh'));
+  }, [docs, tagFilter]);
+
   const count = (v: LibraryView) => docs.filter((d) => matchesView(d, v)).length;
   const isActive = (v: LibraryView) => view.kind === v.kind && view.id === v.id;
 
@@ -415,106 +604,146 @@ function Sidebar({ docs }: { docs: DocRecord[] }) {
   });
 
   return (
-    <aside className="lib-side">
-      {smart.map((s) => (
-        <button key={s.v.kind} className={`side-item${isActive(s.v) ? ' active' : ''}`} onClick={() => setView(s.v)}>
-          <span className="side-ico">
-            <Icon name={s.icon} size={15} />
-          </span>
-          {s.label}
-          <span className="count">{count(s.v)}</span>
-        </button>
-      ))}
-      <div className="side-section">
-        分组
-        <button className="icon-btn" style={{ width: 22, height: 22 }} title="新建分组" onClick={() => setAdding(true)}>
-          <Icon name="plus" size={14} />
-        </button>
-      </div>
-      {adding && (
-        <input
-          className="input"
-          autoFocus
-          placeholder="分组名称，回车确认"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          onBlur={() => (setAdding(false), setName(''))}
-          onKeyDown={async (e) => {
-            if (e.key === 'Enter' && name.trim()) {
-              const c = await createCollection(name);
-              setAdding(false);
-              setName('');
-              setView({ kind: 'collection', id: c.id });
-            } else if (e.key === 'Escape') setAdding(false);
-          }}
-        />
-      )}
-      {collections?.map((c) =>
-        editing === c.id ? (
-          <input
-            key={c.id}
-            className="input"
-            autoFocus
-            defaultValue={c.name}
-            onBlur={(e) => {
-              if (e.target.value.trim()) void db.collections.update(c.id, { name: e.target.value.trim() });
-              setEditing(null);
-            }}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
-              if (e.key === 'Escape') setEditing(null);
-            }}
-          />
-        ) : (
-          <div
-            key={c.id}
-            className={`side-item${isActive({ kind: 'collection', id: c.id }) ? ' active' : ''}${over === c.id ? ' drop' : ''}`}
-            role="button"
-            tabIndex={0}
-            onClick={() => setView({ kind: 'collection', id: c.id })}
-            onDoubleClick={() => setEditing(c.id)}
-            {...dropProps(c.id)}
-            title="双击重命名；把文献拖到这里加入分组"
-          >
+    <aside className="lib-side" style={{ width }}>
+      <div className="lib-side-scroll">
+        <div className="side-section" style={{ marginTop: 4 }}>
+          <span>我的文库</span>
+        </div>
+        {smart.map((s) => (
+          <button key={s.v.kind} className={`side-item${isActive(s.v) ? ' active' : ''}`} onClick={() => setView(s.v)}>
             <span className="side-ico">
-              <Icon name="folder" size={15} />
+              <Icon name={s.icon} size={14} />
             </span>
-            <span className="side-name">{c.name}</span>
-            <span className="count">{count({ kind: 'collection', id: c.id })}</span>
-            <button
-              className="side-del"
-              title="删除分组（不删除文献）"
-              onClick={(e) => {
-                e.stopPropagation();
-                if (confirm(`删除分组「${c.name}」？其中的文献不会被删除。`)) {
-                  void deleteCollection(c.id);
-                  if (isActive({ kind: 'collection', id: c.id })) setView({ kind: 'all' });
-                }
-              }}
-            >
-              ×
-            </button>
-          </div>
-        ),
-      )}
-      {collections?.length === 0 && !adding && <div className="hint" style={{ padding: '2px 10px' }}>点 + 新建分组，拖动文献到分组中</div>}
-      {tags.length > 0 && <div className="side-section">标签</div>}
-      <div className="side-tags">
-        {tags.map(([t, n]) => (
-          <button
-            key={t}
-            className={`tag-chip clickable${isActive({ kind: 'tag', id: t }) ? ' active' : ''}`}
-            onClick={() => setView(isActive({ kind: 'tag', id: t }) ? { kind: 'all' } : { kind: 'tag', id: t })}
-            onDoubleClick={() => {
-              const to = prompt(`重命名标签「${t}」为：`, t);
-              if (to && to !== t) void renameTag(t, to);
-            }}
-            title="点击筛选，双击重命名"
-          >
-            {t} <span className="count">{n}</span>
+            <span className="side-name">{s.label}</span>
+            <span className="count">{count(s.v)}</span>
           </button>
         ))}
+
+        <div className="side-section">
+          <span>分类</span>
+          <button className="icon-btn" style={{ width: 22, height: 22 }} title="新建分类" onClick={() => setAdding(true)}>
+            <Icon name="plus" size={13} />
+          </button>
+        </div>
+        {adding && (
+          <input
+            className="input sm"
+            style={{ width: 'calc(100% - 8px)', margin: '2px 4px 4px' }}
+            autoFocus
+            placeholder="分类名称，回车确认"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            onBlur={() => (setAdding(false), setName(''))}
+            onKeyDown={async (e) => {
+              if (e.key === 'Enter' && name.trim()) {
+                const c = await createCollection(name);
+                setAdding(false);
+                setName('');
+                setView({ kind: 'collection', id: c.id });
+              } else if (e.key === 'Escape') setAdding(false);
+            }}
+          />
+        )}
+        {collections?.map((c) =>
+          editing === c.id ? (
+            <input
+              key={c.id}
+              className="input sm"
+              style={{ width: 'calc(100% - 8px)', margin: '2px 4px' }}
+              autoFocus
+              defaultValue={c.name}
+              onBlur={(e) => {
+                if (e.target.value.trim()) void db.collections.update(c.id, { name: e.target.value.trim() });
+                setEditing(null);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+                if (e.key === 'Escape') setEditing(null);
+              }}
+            />
+          ) : (
+            <div
+              key={c.id}
+              className={`side-item${isActive({ kind: 'collection', id: c.id }) ? ' active' : ''}${over === c.id ? ' drop' : ''}`}
+              role="button"
+              tabIndex={0}
+              onClick={() => setView({ kind: 'collection', id: c.id })}
+              onDoubleClick={() => setEditing(c.id)}
+              {...dropProps(c.id)}
+              title="双击重命名；把文献拖到这里加入分类"
+            >
+              <span className="side-ico">
+                <Icon name="folder" size={14} />
+              </span>
+              <span className="side-name">{c.name}</span>
+              <span className="count">{count({ kind: 'collection', id: c.id })}</span>
+              <button
+                className="side-del"
+                title="删除分类（不删除文献）"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (confirm(`删除分类「${c.name}」？其中的文献不会被删除。`)) {
+                    void deleteCollection(c.id);
+                    if (isActive({ kind: 'collection', id: c.id })) setView({ kind: 'all' });
+                  }
+                }}
+              >
+                ×
+              </button>
+            </div>
+          ),
+        )}
+        {collections?.length === 0 && !adding && <div className="hint" style={{ padding: '2px 10px' }}>点 + 新建分类，拖动文献归类</div>}
       </div>
+
+      {/* Zotero-style docked bottom Tag Selector */}
+      <div className="tag-pane">
+        <div className="tag-pane-head">
+          <span className="row" style={{ gap: 5 }}>
+            <Icon name="tag" size={12} /> 标签
+          </span>
+          {view.kind === 'tag' && (
+            <button className="btn ghost sm" style={{ height: 20, padding: '0 4px' }} onClick={() => setView({ kind: 'all' })}>
+              清除
+            </button>
+          )}
+        </div>
+        <div className="tag-pane-list">
+          {tags.length === 0 ? (
+            <span className="hint">{tagFilter ? '无匹配标签' : '暂无标签'}</span>
+          ) : (
+            tags.map(([t, n]) => (
+              <button
+                key={t}
+                className={`tag-chip clickable${isActive({ kind: 'tag', id: t }) ? ' active' : ''}`}
+                onClick={() => setView(isActive({ kind: 'tag', id: t }) ? { kind: 'all' } : { kind: 'tag', id: t })}
+                onDoubleClick={() => {
+                  const to = prompt(`重命名标签「${t}」为：`, t);
+                  if (to && to !== t) void renameTag(t, to);
+                }}
+                title="点击筛选，双击重命名"
+              >
+                {t} <span className="count">{n}</span>
+              </button>
+            ))
+          )}
+        </div>
+        <input
+          className="tag-pane-filter"
+          placeholder="筛选标签…"
+          value={tagFilter}
+          onChange={(e) => setTagFilter(e.target.value)}
+        />
+      </div>
+
+      <div
+        className={`pane-resizer right${dragging ? ' dragging' : ''}`}
+        onPointerDown={(e) => {
+          startRef.current = { x: e.clientX, w: width };
+          setDragging(true);
+          e.preventDefault();
+        }}
+      />
     </aside>
   );
 }
@@ -545,6 +774,16 @@ function BulkBar({ docs }: { docs: DocRecord[] }) {
       <button className="btn sm ghost" onClick={() => setChecked(checked.length === docs.length ? [] : docs.map((d) => d.id))}>
         {checked.length === docs.length ? '全不选' : '全选'}
       </button>
+      <button
+        className="btn sm"
+        onClick={() => {
+          const pdfs = items.filter((d) => d.hasPdf);
+          pdfs.forEach((d, i) => openDocTab(d.id, { title: d.title, background: i < pdfs.length - 1 }));
+        }}
+        title="在顶部标签栏批量打开选中 PDF"
+      >
+        标签页打开
+      </button>
       <select
         className="select sm"
         value=""
@@ -552,7 +791,7 @@ function BulkBar({ docs }: { docs: DocRecord[] }) {
           if (e.target.value) void addToCollection(checked, e.target.value);
         }}
       >
-        <option value="">加入分组…</option>
+        <option value="">加入分类…</option>
         {collections?.map((c) => (
           <option key={c.id} value={c.id}>
             {c.name}
@@ -561,7 +800,7 @@ function BulkBar({ docs }: { docs: DocRecord[] }) {
       </select>
       {view.kind === 'collection' && view.id && (
         <button className="btn sm" onClick={() => void removeFromCollection(checked, view.id!)}>
-          移出分组
+          移出分类
         </button>
       )}
       {tagInput === null ? (
@@ -608,8 +847,8 @@ function BulkBar({ docs }: { docs: DocRecord[] }) {
         删除
       </button>
       <div className="spacer" />
-      <button className="icon-btn" title="取消选择" onClick={() => setChecked([])}>
-        <Icon name="close" size={16} />
+      <button className="icon-btn sm-ico" title="取消选择" onClick={() => setChecked([])}>
+        <Icon name="close" size={15} />
       </button>
     </div>
   );

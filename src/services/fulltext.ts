@@ -15,6 +15,7 @@ import { PLACEHOLDER_RULE, withRetry } from '../pdfout/common';
 import type { PageDiag, PageItem, PagePlan } from '../pdfout/translatePdf';
 import { getSettings } from '../store/settings';
 import { useReader, type ParaState } from '../store/reader';
+import { registerFullTextEvictor } from '../store/tabs';
 import { describeError, getCachedTranslations, translateBatch } from './translate';
 
 type Pipeline = typeof import('../pdfout/translatePdf');
@@ -40,17 +41,29 @@ interface Session {
   diags: Map<number, PageDiag>;
 }
 
-let session: Session | null = null;
+const sessions = new Map<string, Session>();
 let controller: AbortController | null = null;
 
 const MAX_BATCH_CHARS = 3500;
 
+export function evictFullTextSession(docId: string) {
+  const s = sessions.get(docId);
+  if (s) {
+    s.abort.abort();
+    sessions.delete(docId);
+  }
+}
+
+registerFullTextEvictor(evictFullTextSession);
+
 function getSession(): Session | null {
   const { pdf, docId } = useReader.getState();
   if (!pdf || !docId) return null;
-  if (session?.pdf === pdf) return session;
+  const existing = sessions.get(docId);
+  if (existing?.pdf === pdf) return existing;
+  if (existing) existing.abort.abort();
   const mod = import('../pdfout/translatePdf');
-  session = {
+  const created: Session = {
     pdf,
     docId,
     mod,
@@ -72,7 +85,8 @@ function getSession(): Session | null {
     rendering: new Map(),
     diags: new Map(),
   };
-  return session;
+  sessions.set(docId, created);
+  return created;
 }
 
 /**
@@ -309,7 +323,8 @@ export async function pageParagraphs(pageIndex: number): Promise<Paragraph[]> {
 
 /** Per-block diagnostics of the last rendered translation of a page (debugging aid). */
 export function pageDiagnostics(pageIndex: number): PageDiag | undefined {
-  return session?.diags.get(pageIndex);
+  const { docId } = useReader.getState();
+  return docId ? sessions.get(docId)?.diags.get(pageIndex) : undefined;
 }
 
 function makeBatches<T extends { item: PageItem }>(entries: T[], size: number): T[][] {
@@ -503,12 +518,12 @@ export async function retryParagraph(p: Paragraph) {
 /** Call when translation-affecting settings change: stop work and drop shown results. */
 export function invalidateTranslations() {
   stopFullText();
-  if (session) {
-    session.abort.abort();
-    session.abort = new AbortController();
-    session.incomingUsed.clear();
+  for (const s of sessions.values()) {
+    s.abort.abort();
+    s.abort = new AbortController();
+    s.incomingUsed.clear();
+    s.raw.clear();
+    s.rendering.clear();
   }
-  session?.raw.clear();
-  session?.rendering.clear();
   useReader.getState().resetTranslations();
 }

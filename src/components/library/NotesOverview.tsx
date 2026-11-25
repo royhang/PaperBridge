@@ -2,7 +2,7 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { useMemo, useState } from 'react';
 import { db, type HighlightColor, type NoteRecord } from '../../db/db';
 import { authorsShort } from '../../library/format';
-import { navigate, openSettings } from '../../lib/nav';
+import { openDocTab } from '../../lib/nav';
 import { download } from '../../services/export';
 import { Icon } from '../Icon';
 
@@ -53,48 +53,34 @@ export function NotesOverview() {
 
   return (
     <div className="lib">
-      <header className="lib-header">
-        <div className="brand">
-          <div className="brand-mark">译</div>
-          <span className="hide-sm">PaperBridge</span>
+      <div className="lib-toolbar">
+        <div className="search">
+          <Icon name="search" size={14} />
+          <input className="input" placeholder="搜索摘录、批注、译文、文献标题…" value={q} onChange={(e) => setQ(e.target.value)} />
         </div>
-        <nav className="lib-tabs">
-          <button onClick={() => navigate('#/')}>文献</button>
-          <button className="active">笔记</button>
-        </nav>
-        <div className="spacer" />
-        <button className="btn" onClick={() => openSettings('providers')}>
-          <Icon name="settings" size={16} /> <span className="hide-sm">设置</span>
+        <button className={`chip${color === 'all' ? ' active' : ''}`} onClick={() => setColor('all')}>
+          全部
         </button>
-      </header>
+        {COLORS.map((c) => (
+          <button
+            key={c}
+            className={`swatch ${c}`}
+            style={{ outline: color === c ? '2px solid var(--accent)' : undefined, outlineOffset: 1 }}
+            onClick={() => setColor(color === c ? 'all' : c)}
+            title={c}
+          />
+        ))}
+        <label className="check" style={{ margin: 0, fontSize: 12.5 }}>
+          <input type="checkbox" checked={onlyCommented} onChange={(e) => setOnlyCommented(e.target.checked)} />
+          只看有批注的
+        </label>
+        <div className="spacer" />
+        <span className="hint">{total} 条</span>
+        <button className="btn sm" disabled={!total} onClick={exportAll}>
+          <Icon name="download" size={13} /> 导出 Markdown
+        </button>
+      </div>
       <div className="notes-page">
-        <div className="lib-toolbar" style={{ padding: '12px 0' }}>
-          <div className="search">
-            <Icon name="search" size={15} />
-            <input className="input" placeholder="搜索摘录、批注、译文、文献标题…" value={q} onChange={(e) => setQ(e.target.value)} />
-          </div>
-          <button className={`chip${color === 'all' ? ' active' : ''}`} onClick={() => setColor('all')}>
-            全部
-          </button>
-          {COLORS.map((c) => (
-            <button
-              key={c}
-              className={`swatch ${c}`}
-              style={{ outline: color === c ? '2px solid var(--accent)' : undefined, outlineOffset: 1 }}
-              onClick={() => setColor(color === c ? 'all' : c)}
-              title={c}
-            />
-          ))}
-          <label className="check" style={{ margin: 0 }}>
-            <input type="checkbox" checked={onlyCommented} onChange={(e) => setOnlyCommented(e.target.checked)} />
-            只看有批注的
-          </label>
-          <div className="spacer" />
-          <span className="hint">{total} 条</span>
-          <button className="btn sm" disabled={!total} onClick={exportAll}>
-            <Icon name="download" size={13} /> 导出 Markdown
-          </button>
-        </div>
         {notes && total === 0 && (
           <div className="empty">
             <Icon name="highlight" size={28} />
@@ -105,7 +91,10 @@ export function NotesOverview() {
           const d = docMap.get(g.docId);
           return (
             <section key={g.docId} className="notes-group">
-              <h3 onClick={() => d?.hasPdf && navigate(`#/doc/${g.docId}`)} style={{ cursor: d?.hasPdf ? 'pointer' : undefined }}>
+              <h3
+                onClick={() => d?.hasPdf && openDocTab(g.docId, { title: d.title })}
+                style={{ cursor: d?.hasPdf ? 'pointer' : undefined }}
+              >
                 {d?.title ?? '（已删除的文献）'}
                 {d && <span className="hint"> {[authorsShort(d.meta.authors), d.meta.year].filter(Boolean).join(' · ')}</span>}
               </h3>
@@ -115,11 +104,11 @@ export function NotesOverview() {
                   className={`note ${n.color}`}
                   role="button"
                   tabIndex={0}
-                  onClick={() => navigate(`#/doc/${n.docId}?page=${n.pageIndex + 1}`)}
+                  onClick={() => openDocTab(n.docId, { title: d?.title, page: n.pageIndex + 1 })}
                   style={{ cursor: 'pointer' }}
                 >
                   <div className="row" style={{ marginBottom: 4 }}>
-                    <span className="hint">p.{n.pageIndex + 1}</span>
+                    <span className="badge">p.{n.pageIndex + 1}</span>
                     <span className="hint">· {new Date(n.createdAt).toLocaleDateString()}</span>
                   </div>
                   <div className="quote">{n.quote}</div>

@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import type { PDFDocumentProxy } from '../pdf/loader';
 import type { NRect } from '../db/db';
+import type { ReaderSnapshot } from './tabs';
 
 export type SideTab = 'translate' | 'parallel' | 'chat' | 'notes' | 'glossary';
 
@@ -72,7 +73,7 @@ interface ReaderStore {
 
   handoffTo: (target: 'glossary' | 'chat', text: string) => void;
   consumeHandoff: () => void;
-  open: (docId: string, title: string, pdf: PDFDocumentProxy, page: number) => void;
+  open: (docId: string, title: string, pdf: PDFDocumentProxy, page: number, snapshot?: ReaderSnapshot) => void;
   close: () => void;
   setScale: (s: number) => void;
   setCurrentPage: (p: number) => void;
@@ -114,21 +115,28 @@ export const useReader = create<ReaderStore>()((set) => ({
 
   handoffTo: (target, text) => set({ handoff: { target, text, nonce: ++jobSeq }, sideTab: target, sideOpen: true }),
   consumeHandoff: () => set({ handoff: null }),
-  open: (docId, title, pdf, page) =>
-    set({
-      docId,
-      title,
-      pdf,
-      currentPage: page,
-      selection: null,
-      job: null,
-      paraStates: {},
-      pageStates: {},
-      focusParagraph: null,
-      fullTextRunning: false,
-      scrollTarget: page > 0 ? { pageIndex: page, nonce: ++scrollSeq } : null,
+  open: (docId, title, pdf, page, snapshot) =>
+    set((s) => {
+      const keepTrans = snapshot && snapshot.transVersion === s.transVersion;
+      return {
+        docId,
+        title,
+        pdf,
+        currentPage: page,
+        scale: snapshot?.scale ?? s.scale,
+        viewMode: snapshot?.viewMode ?? 'original',
+        sideTab: snapshot?.sideTab ?? s.sideTab,
+        sideOpen: snapshot?.sideOpen ?? s.sideOpen,
+        selection: null,
+        job: null,
+        paraStates: keepTrans ? snapshot.paraStates : {},
+        pageStates: keepTrans ? snapshot.pageStates : {},
+        focusParagraph: null,
+        fullTextRunning: false,
+        scrollTarget: page > 0 ? { pageIndex: page, nonce: ++scrollSeq } : null,
+      };
     }),
-  close: () => set({ docId: null, pdf: null, title: '', selection: null, job: null, paraStates: {}, pageStates: {} }),
+  close: () => set({ docId: null, pdf: null, title: '', selection: null, job: null, paraStates: {}, pageStates: {}, fullTextRunning: false }),
   setScale: (scale) => set({ scale: Math.min(4, Math.max(0.5, Math.round(scale * 100) / 100)) }),
   setCurrentPage: (currentPage) => set({ currentPage }),
   setSideTab: (sideTab) => set({ sideTab, sideOpen: true }),
