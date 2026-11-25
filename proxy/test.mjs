@@ -221,6 +221,32 @@ test('requires the configured token and removes it from upstream requests', asyn
   assert.equal((await accepted.json()).headers['x-proxy-token'], undefined);
 });
 
+test('allows configured origins and same-origin fetches without requiring the token', async t => {
+  const base = await start(createProxyServer({
+    env: { ...localEnv, PROXY_TOKEN: 'test-secret', ALLOWED_ORIGINS: `${appOrigin},https://self.example:9999` },
+  }), t);
+  const url = proxied(`${upstreamBase}/echo`, base);
+
+  const foreign = await fetch(url, { headers: { origin: 'https://evil.example' } });
+  assert.equal(foreign.status, 403);
+
+  const noOrigin = await fetch(url);
+  assert.equal(noOrigin.status, 403);
+
+  const byOrigin = await fetch(url, { headers: { origin: appOrigin } });
+  assert.equal(byOrigin.status, 200);
+
+  const bySameOrigin = await fetch(url, {
+    headers: { 'sec-fetch-site': 'same-origin', 'x-forwarded-host': 'self.example:9999' },
+  });
+  assert.equal(bySameOrigin.status, 200);
+
+  const wrongHost = await fetch(url, {
+    headers: { 'sec-fetch-site': 'same-origin', 'x-forwarded-host': 'other.example:9999' },
+  });
+  assert.equal(wrongHost.status, 403);
+});
+
 test('rejects invalid schemes and defaults to blocking private IP literals and unlisted hosts', async t => {
   const invalid = await fetch(proxied('file:///tmp/paper'));
   assert.equal(invalid.status, 400);

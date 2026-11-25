@@ -506,6 +506,18 @@ function ProviderEditor({
         return;
       }
       if (!isDesktop && target.useProxy) {
+        if (isProxyTokenError(msg) && !pTok) {
+          try {
+            const direct = { ...target, useProxy: false };
+            const outDirect = await testProvider(createProvider(direct, makeContext(direct, pUrl, pTok)));
+            patch({ useProxy: false });
+            setTest({ state: 'ok', msg: outDirect.slice(0, 160) });
+            if (saveOnOk) saveCfg(direct);
+            return;
+          } catch {
+            // Direct also failed (likely CORS), fall through to show the token wizard.
+          }
+        }
         const wiz = classifyProxyErr(msg, retryAction, pUrl);
         if (wiz) {
           setTest({ state: 'error', msg });
@@ -579,6 +591,22 @@ function ProviderEditor({
         return;
       }
       if (!isDesktop && target.useProxy) {
+        if (isProxyTokenError(msg) && !pTok) {
+          try {
+            const direct = { ...target, useProxy: false };
+            const ids = await requestModels(direct, pUrl, pTok);
+            patch({ useProxy: false });
+            setModels(ids);
+            if (!ids.length) setTest({ state: 'error', msg: '没有返回模型列表' });
+            else {
+              if (!direct.model) patch({ model: ids[0] });
+              setTest({ state: 'ok', msg: `已获取 ${ids.length} 个模型` });
+            }
+            return;
+          } catch {
+            // Direct also failed (likely CORS), fall through to show the token wizard.
+          }
+        }
         const wiz = classifyProxyErr(msg, 'models', pUrl);
         if (wiz) {
           setTest({ state: 'error', msg: `获取模型列表失败：${msg}` });
@@ -764,8 +792,10 @@ function ProviderEditor({
         保存后设为默认{llm ? '翻译和问答' : '翻译'}服务
       </label>
 
-      <details className="inspector-sec" style={{ marginBottom: 12 }} open={!isDesktop && !!cfg.useProxy}>
-        <summary>高级选项（{isPreset ? 'Base URL / ' : ''}Temperature{!isDesktop ? ' / 跨域代理' : ''}）</summary>
+      <details className="inspector-sec" style={{ marginBottom: 12 }}>
+        <summary>
+          高级选项（{isPreset ? 'Base URL / ' : ''}Temperature{!isDesktop ? ` / 跨域代理${cfg.useProxy ? '：已开启' : ''}` : ''}）
+        </summary>
         <div className="inspector-sec-body">
           {isPreset && cfg.kind !== 'baidu' && cfg.kind !== 'youdao' && (
             <div className="field">

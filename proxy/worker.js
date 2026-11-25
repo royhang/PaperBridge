@@ -37,11 +37,15 @@ export class ProxyError extends Error {
 
 export function proxyConfig(env) {
   const hosts = env.ALLOWED_HOSTS?.trim();
+  const origins = env.ALLOWED_ORIGINS?.trim();
   const downloadBytes = Math.floor(Number(env.MAX_DOWNLOAD_MB ?? 100) * 1024 * 1024);
   return {
     hosts: hosts === '*' ? null : (hosts?.split(',') ?? DEFAULT_HOSTS)
       .map(host => host.trim().toLowerCase().replace(/^\.|\.$/g, ''))
       .filter(Boolean),
+    allowedOrigins: origins
+      ? origins.split(',').map(o => o.trim().replace(/\/+$/, '').toLowerCase()).filter(Boolean)
+      : [],
     allowPrivate: env.ALLOW_PRIVATE === '1',
     allowAnyGet: env.ALLOW_ANY_GET === '1',
     maxDownloadBytes: Number.isSafeInteger(downloadBytes) && downloadBytes > 0
@@ -116,9 +120,23 @@ export function blockedAddress() {
   return new ProxyError(403, 'Private or loopback targets are disabled');
 }
 
+function isAuthorizedOrigin(headers, allowedOrigins) {
+  if (!allowedOrigins.length) return false;
+  const origin = headers.get('origin')?.trim().replace(/\/+$/, '').toLowerCase();
+  if (origin) return allowedOrigins.includes(origin);
+  if (headers.get('sec-fetch-site') === 'same-origin') {
+    const reqHost = (headers.get('x-forwarded-host') || headers.get('host') || '').trim().toLowerCase();
+    if (!reqHost) return false;
+    return allowedOrigins.some(o => {
+      try { return new URL(o).host.toLowerCase() === reqHost; } catch { return false; }
+    });
+  }
+  return false;
+}
+
 export function validateTarget(target, headers, config, method) {
   const host = target.hostname.replace(/\.$/, '');
-  if (config.token && headers.get('x-proxy-token') !== config.token) {
+  if (config.token && headers.get('x-proxy-token') !== config.token && !isAuthorizedOrigin(headers, config.allowedOrigins)) {
     throw new ProxyError(403, 'Invalid or missing proxy token');
   }
   validatePublicTarget(target, config);
