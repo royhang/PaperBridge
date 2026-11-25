@@ -430,7 +430,7 @@ export function describeError(e: unknown): string {
     return `${e.message}${hint}`;
   }
   if (e instanceof TypeError && /fetch/i.test(e.message)) {
-    return `网络请求失败：${e.message}。可能是该服务不允许浏览器跨域（CORS），请在设置中为此服务开启「通过代理」并运行 proxy/server.mjs。`;
+    return `网络请求失败：${e.message}。可能是该服务不允许浏览器跨域（CORS）或代理未连接，请在「设置 → API 服务」中开启中转代理并按引导完成配置。`;
   }
   return e instanceof Error ? e.message : String(e);
 }

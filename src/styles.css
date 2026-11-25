@@ -2067,3 +2067,39 @@ a {
 .update-pill:hover {
   filter: brightness(1.08);
 }
+.proxy-wizard {
+  margin-bottom: 12px;
+  padding: 12px 14px;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--border));
+  background: color-mix(in srgb, var(--accent-soft) 55%, var(--bg));
+}
+.proxy-wizard-title {
+  font-weight: 600;
+  font-size: 13.5px;
+  margin-bottom: 4px;
+  color: var(--fg);
+}
+.proxy-wizard-desc {
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--fg-muted);
+  margin-bottom: 10px;
+}
+.proxy-wizard-cmd {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: var(--bg-sunken);
+  border: 1px solid var(--border);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  margin-top: 8px;
+  overflow-x: auto;
+}
+.proxy-wizard-cmd code {
+  flex: 1;
+  white-space: nowrap;
+}

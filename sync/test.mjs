@@ -21,7 +21,7 @@ async function start(env = {}) {
 }
 
 test('auth register/login, LWW + tombstone merge, encrypted settings, and per-user PDF blob isolation', async () => {
-  const srv = await start({ INVITE_CODE: 'secret42' });
+  const srv = await start({ INVITE_CODE: 'secret42', PROXY_TOKEN: 'ptok-xyz' });
   try {
     // Health
     const health = await (await fetch(`${srv.base}/api/health`)).json();
@@ -45,6 +45,7 @@ test('auth register/login, LWW + tombstone merge, encrypted settings, and per-us
       })
     ).json();
     assert.ok(regA.token);
+    assert.equal(regA.proxy?.token, 'ptok-xyz');
 
     const regB = await (
       await fetch(`${srv.base}/api/auth/register`, {

@@ -183,8 +183,10 @@ export function createSyncServer(opts = {}) {
   const blobsDir = join(dataDir, 'blobs');
   const allowRegister = env.ALLOW_REGISTER !== '0';
   const inviteCode = (env.INVITE_CODE ?? '').trim();
+  const sharedProxyToken = (env.PROXY_TOKEN ?? '').trim();
   const maxPdfBytes = Math.max(1, Number(env.MAX_PDF_MB) || 150) * 1024 * 1024;
   const maxSyncBytes = Math.max(1, Number(env.MAX_SYNC_MB) || 64) * 1024 * 1024;
+  const proxyHint = sharedProxyToken ? { proxy: { token: sharedProxyToken } } : {};
 
   mkdirSync(usersDir, { recursive: true });
   mkdirSync(blobsDir, { recursive: true });
@@ -262,7 +264,7 @@ export function createSyncServer(opts = {}) {
         const { salt, hash } = hashPassword(password);
         users[username] = { username, salt, hash, createdAt: Date.now(), tokens: [] };
         const token = issueToken(users, users[username], body.device);
-        return sendJson(res, 201, { username, token });
+        return sendJson(res, 201, { username, token, ...proxyHint });
       }
 
       // POST /api/auth/login
@@ -276,7 +278,7 @@ export function createSyncServer(opts = {}) {
           return sendJson(res, 401, { error: '用户名或密码错误' });
         }
         const token = issueToken(users, user, body.device);
-        return sendJson(res, 200, { username, token });
+        return sendJson(res, 200, { username, token, ...proxyHint });
       }
 
       // Authenticated endpoints below
@@ -322,7 +324,7 @@ export function createSyncServer(opts = {}) {
               neededHashes.add(d.hash);
             }
           }
-          return { revision: merged.revision, updatedAt: merged.updatedAt, state: merged, missingBlobs: [...neededHashes] };
+          return { revision: merged.revision, updatedAt: merged.updatedAt, state: merged, missingBlobs: [...neededHashes], ...proxyHint };
         });
         return sendJson(res, 200, result);
       }

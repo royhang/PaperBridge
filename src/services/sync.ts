@@ -103,12 +103,21 @@ export async function checkSyncServer(serverUrl: string): Promise<{ ok: boolean;
   return apiJson(serverUrl, '/api/health', { method: 'GET' });
 }
 
+function applyProxyHint(serverBase: string, proxy?: { token?: string }) {
+  if (desktop() || !proxy?.token) return;
+  const cur = useSettings.getState();
+  if (cur.proxyUrl !== serverBase || cur.proxyToken !== proxy.token) {
+    cur.set({ proxyUrl: serverBase, proxyToken: proxy.token });
+  }
+}
+
 export async function registerAccount(serverUrl: string, username: string, password: string, inviteCode?: string) {
   const base = normalizeServerUrl(serverUrl);
-  const res = await apiJson<{ username: string; token: string }>(base, '/api/auth/register', {
+  const res = await apiJson<{ username: string; token: string; proxy?: { token?: string } }>(base, '/api/auth/register', {
     method: 'POST',
     body: JSON.stringify({ username: username.trim().toLowerCase(), password, inviteCode: inviteCode?.trim() || undefined, device: deviceLabel() }),
   });
+  applyProxyHint(base, res.proxy);
   const encKeyB64 = await deriveKeyB64(res.username, password);
   useSync.getState().set({ serverUrl: base, username: res.username, token: res.token, encKeyB64, lastError: '' });
   await syncNow();
@@ -117,10 +126,11 @@ export async function registerAccount(serverUrl: string, username: string, passw
 
 export async function loginAccount(serverUrl: string, username: string, password: string) {
   const base = normalizeServerUrl(serverUrl);
-  const res = await apiJson<{ username: string; token: string }>(base, '/api/auth/login', {
+  const res = await apiJson<{ username: string; token: string; proxy?: { token?: string } }>(base, '/api/auth/login', {
     method: 'POST',
     body: JSON.stringify({ username: username.trim().toLowerCase(), password, device: deviceLabel() }),
   });
+  applyProxyHint(base, res.proxy);
   const encKeyB64 = await deriveKeyB64(res.username, password);
   useSync.getState().set({ serverUrl: base, username: res.username, token: res.token, encKeyB64, lastError: '' });
   await syncNow();
@@ -153,6 +163,7 @@ interface MergeResponse {
   updatedAt: number;
   state: RemoteState;
   missingBlobs: string[];
+  proxy?: { token?: string };
 }
 
 function indexBy<T>(arr: T[], keyOf: (x: T) => string): Record<string, T> {
@@ -236,6 +247,7 @@ export async function syncNow(): Promise<boolean> {
       );
 
       // Apply merged records back into local IndexedDB without triggering local change hooks
+      applyProxyHint(normalizeServerUrl(sync.serverUrl), res.proxy);
       suppressHooks = true;
       try {
         const remote = res.state;

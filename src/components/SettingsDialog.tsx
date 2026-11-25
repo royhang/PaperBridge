@@ -12,7 +12,7 @@ import { ensureOk } from '../providers/sse';
 import { checkSyncServer, loginAccount, logoutAccount, registerAccount, syncNow } from '../services/sync';
 import { describeError } from '../services/translate';
 import { checkForUpdates, type UpdateInfo } from '../services/update';
-import { DEFAULT_PROMPTS, useSettings, type PromptTemplates } from '../store/settings';
+import { DEFAULT_PROMPTS, defaultProxyUrl, useSettings, type PromptTemplates } from '../store/settings';
 import { useSync } from '../store/sync';
 import { useEscape } from '../lib/useEscape';
 import { Icon } from './Icon';
@@ -51,6 +51,48 @@ const QUICK_PRESET_LABELS = [
 ];
 
 const isLLM = (k: ProviderKind) => LLM_KINDS.includes(k);
+
+const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]', '0.0.0.0']);
+const isLocalEndpoint = (baseUrl?: string): boolean => {
+  if (!baseUrl) return false;
+  try {
+    return LOCAL_HOSTS.has(new URL(baseUrl).hostname.toLowerCase());
+  } catch {
+    return false;
+  }
+};
+
+const isNetworkOrCorsError = (msg: string) => /Failed to fetch|Load failed|NetworkError|CORS|网络请求失败/i.test(msg);
+const isProxyTokenError = (msg: string) => /proxy token|代理令牌/i.test(msg);
+const isProxyHostError = (msg: string) => /not allowed|白名单/i.test(msg);
+
+async function probeProxy(url: string): Promise<boolean> {
+  const clean = url.trim().replace(/\/+$/, '');
+  if (!clean) return false;
+  try {
+    const res = await fetch(`${clean}/health`, { signal: AbortSignal.timeout(2500) });
+    if (!res.ok) return false;
+    const text = (await res.text()).trim().toLowerCase();
+    return text === 'ok';
+  } catch {
+    return false;
+  }
+}
+
+async function detectAvailableProxy(currentProxyUrl?: string): Promise<string | null> {
+  const candidates = [...new Set([currentProxyUrl?.trim(), defaultProxyUrl(), 'http://127.0.0.1:8787'].filter((x): x is string => !!x))];
+  for (const c of candidates) {
+    if (await probeProxy(c)) return c.replace(/\/+$/, '');
+  }
+  return null;
+}
+
+type ProxyWizardState = {
+  reason: 'token' | 'missing' | 'host';
+  retryAction: 'models' | 'test' | 'testAndSave';
+  detectedUrl?: string;
+  host?: string;
+};
 
 // In-memory draft store so switching settings tabs or closing & reopening Settings never wipes half-filled inputs.
 interface SettingsDraftStore {
@@ -91,9 +133,25 @@ const useSettingsDraft = create<SettingsDraftStore>()((set) => ({
 
 export function SettingsDialog({ initial, onClose }: { initial: SettingsSection; onClose: () => void }) {
   const [section, setSection] = useState<SettingsSection>(initial);
+  const [detectedProxy, setDetectedProxy] = useState<string | null>(null);
   const hasProviderDraft = useSettingsDraft((s) => !!s.editingProvider || !!s.snippet.trim());
   const hasSyncDraft = useSettingsDraft((s) => !!s.syncDraft && (!!s.syncDraft.username.trim() || !!s.syncDraft.password));
   useEscape(onClose);
+
+  useEffect(() => {
+    if (desktop()) return;
+    let alive = true;
+    void detectAvailableProxy(useSettings.getState().proxyUrl).then((found) => {
+      if (!alive || !found) return;
+      setDetectedProxy(found);
+      if (!useSettings.getState().proxyUrl.trim()) {
+        useSettings.getState().set({ proxyUrl: found });
+      }
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   return (
     <div className="overlay" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
@@ -118,11 +176,11 @@ export function SettingsDialog({ initial, onClose }: { initial: SettingsSection;
             })}
           </nav>
           <div className="settings-content">
-            {section === 'providers' && <ProvidersSection />}
-            {section === 'sync' && <SyncSection />}
+            {section === 'providers' && <ProvidersSection detectedProxy={detectedProxy} onOpenSection={setSection} />}
+            {section === 'sync' && <SyncSection onOpenSection={setSection} />}
             {section === 'translate' && <TranslateSection />}
             {section === 'prompts' && <PromptsSection />}
-            {section === 'proxy' && <ProxySection />}
+            {section === 'proxy' && <ProxySection onOpenSection={setSection} />}
             {section === 'general' && <GeneralSection />}
             {section === 'data' && <DataSection />}
           </div>
@@ -134,8 +192,15 @@ export function SettingsDialog({ initial, onClose }: { initial: SettingsSection;
 
 // ---------------------------------------------------------------- providers (streamlined quick import)
 
-function ProvidersSection() {
+function ProvidersSection({
+  detectedProxy,
+  onOpenSection,
+}: {
+  detectedProxy: string | null;
+  onOpenSection: (s: SettingsSection) => void;
+}) {
   const providers = useSettings((s) => s.providers);
+  const proxyToken = useSettings((s) => s.proxyToken);
   const removeProvider = useSettings((s) => s.removeProvider);
   const upsertProvider = useSettings((s) => s.upsertProvider);
   const setSettings = useSettings((s) => s.set);
@@ -148,7 +213,10 @@ function ProvidersSection() {
   const [pasteMsg, setPasteMsg] = useState('');
   const [copied, setCopied] = useState(false);
 
-  if (editing) return <ProviderEditor onDone={() => setEditing(null)} />;
+  const shouldDefaultProxy = (baseUrl?: string, force?: boolean) =>
+    !desktop() && !isLocalEndpoint(baseUrl) && (!!detectedProxy || !!proxyToken || !!force);
+
+  if (editing) return <ProviderEditor detectedProxy={detectedProxy} onDone={() => setEditing(null)} onOpenSection={onOpenSection} />;
 
   const startPreset = (label: string) => {
     const pr = PROVIDER_PRESETS.find((p) => p.label === label);
@@ -163,7 +231,7 @@ function ProvidersSection() {
         baseUrl: pr.baseUrl,
         apiKey: '',
         model: pr.model,
-        useProxy: !desktop() && !!pr.note,
+        useProxy: shouldDefaultProxy(pr.baseUrl, !!pr.note),
       },
     });
   };
@@ -176,7 +244,7 @@ function ProvidersSection() {
     }
     if (parsed.providers?.length) {
       for (const p of parsed.providers) {
-        upsertProvider({ ...p, id: p.id || uid() });
+        upsertProvider({ ...p, id: p.id || uid(), useProxy: p.useProxy ?? shouldDefaultProxy(p.baseUrl) });
       }
       setSnippet('');
       setPasteMsg(`✓ ${parsed.summary}，已直接导入`);
@@ -194,7 +262,7 @@ function ProvidersSection() {
         baseUrl: parsed.baseUrl,
         apiKey: parsed.apiKey ?? '',
         model: parsed.model,
-        useProxy: !desktop() && !!parsed.useProxy,
+        useProxy: shouldDefaultProxy(parsed.baseUrl, !!parsed.useProxy),
       },
     });
   };
@@ -306,24 +374,39 @@ function ProvidersSection() {
         })}
         <button
           className="preset-card custom"
-          onClick={() => setEditing({ isPreset: false, makeDefault: true, cfg: { id: uid(), name: '', kind: 'openai', apiKey: '', model: '' } })}
+          onClick={() =>
+            setEditing({
+              isPreset: false,
+              makeDefault: true,
+              cfg: { id: uid(), name: '', kind: 'openai', apiKey: '', model: '', useProxy: shouldDefaultProxy() },
+            })
+          }
         >
           <div className="preset-name">+ 自定义 / 其他</div>
           <div className="hint" style={{ fontSize: 11.5 }}>中转站 / DeepL / 百度 / 有道</div>
         </button>
       </div>
       <div className="hint" style={{ marginTop: 10 }}>
-        Key 仅保存在本机{desktop() ? '（桌面客户端内置跨域代理，无需额外配置代理）' : '浏览器'}；如开启「云同步」，会先在本地端到端加密再同步。
+        Key 仅保存在本机{desktop() ? '（桌面客户端内置跨域代理，无需额外配置代理）' : detectedProxy ? `浏览器（已检测到代理 ${detectedProxy}，新建 API 默认自动走代理）` : '浏览器'}；如开启「云同步」，会先在本地端到端加密再同步。
       </div>
     </>
   );
 }
 
-function ProviderEditor({ onDone }: { onDone: () => void }) {
+function ProviderEditor({
+  detectedProxy,
+  onDone,
+  onOpenSection,
+}: {
+  detectedProxy: string | null;
+  onDone: () => void;
+  onOpenSection: (s: SettingsSection) => void;
+}) {
   const upsert = useSettings((s) => s.upsertProvider);
   const proxyUrl = useSettings((s) => s.proxyUrl);
   const proxyToken = useSettings((s) => s.proxyToken);
   const setSettings = useSettings((s) => s.set);
+  const syncLoggedIn = useSync((s) => !!(s.token && s.username));
   const editing = useSettingsDraft((s) => s.editingProvider)!;
   const patch = useSettingsDraft((s) => s.patchEditingCfg);
   const setMakeDefault = useSettingsDraft((s) => s.setEditingMakeDefault);
@@ -331,13 +414,32 @@ function ProviderEditor({ onDone }: { onDone: () => void }) {
   const existing = useSettings((s) => s.providers.find((p) => p.id === cfg.id));
   const isNew = !existing;
   const [showKey, setShowKey] = useState(false);
-  const [test, setTest] = useState<{ state: 'idle' | 'running' | 'ok' | 'error'; msg?: string; corsHint?: boolean }>({ state: 'idle' });
+  const [test, setTest] = useState<{ state: 'idle' | 'running' | 'ok' | 'error'; msg?: string }>({ state: 'idle' });
   const [models, setModels] = useState<string[]>([]);
   const [fetchingModels, setFetchingModels] = useState(false);
+  const [proxyWizard, setProxyWizard] = useState<ProxyWizardState | null>(null);
+  const [wizardBusy, setWizardBusy] = useState(false);
+  const [wizardNote, setWizardNote] = useState('');
+  const [cmdCopied, setCmdCopied] = useState(false);
   const preset = PROVIDER_PRESETS.find((p) => p.label === cfg.name);
   const llm = isLLM(cfg.kind);
   const needsAppId = cfg.kind === 'baidu' || cfg.kind === 'youdao';
   const isDesktop = !!desktop();
+
+  const targetHost = (url?: string) => {
+    try {
+      return new URL(url || 'https://api.openai.com/v1').hostname;
+    } catch {
+      return '';
+    }
+  };
+
+  const classifyProxyErr = (msg: string, retryAction: ProxyWizardState['retryAction'], url?: string): ProxyWizardState | null => {
+    if (isDesktop) return null;
+    if (isProxyTokenError(msg)) return { reason: 'token', retryAction, detectedUrl: url || proxyUrl || defaultProxyUrl() };
+    if (isProxyHostError(msg)) return { reason: 'host', retryAction, detectedUrl: url || proxyUrl || defaultProxyUrl(), host: targetHost(cfg.baseUrl) };
+    return null;
+  };
 
   const applyPreset = (label: string) => {
     const pr = PROVIDER_PRESETS.find((p) => p.label === label);
@@ -347,7 +449,7 @@ function ProviderEditor({ onDone }: { onDone: () => void }) {
       kind: pr.kind,
       baseUrl: pr.baseUrl,
       model: pr.model,
-      useProxy: !isDesktop && !!pr.note,
+      useProxy: !isDesktop && !isLocalEndpoint(pr.baseUrl) && (!!detectedProxy || !!proxyToken || !!pr.note),
     });
     setModels([]);
   };
@@ -364,39 +466,175 @@ function ProviderEditor({ onDone }: { onDone: () => void }) {
     onDone();
   };
 
-  const runTest = async (override?: Partial<ProviderConfig>, saveOnOk = false) => {
+  const runTest = async (override?: Partial<ProviderConfig>, saveOnOk = false, proxyOverride?: { proxyUrl?: string; proxyToken?: string }) => {
     const target = { ...cfg, ...override };
+    const pUrl = proxyOverride?.proxyUrl ?? useSettings.getState().proxyUrl;
+    const pTok = proxyOverride?.proxyToken ?? useSettings.getState().proxyToken;
+    const retryAction: ProxyWizardState['retryAction'] = saveOnOk ? 'testAndSave' : 'test';
     if (override) patch(override);
-    setTest({ state: 'running' });
+    setProxyWizard(null);
+    setWizardNote('');
+    setTest({ state: 'running', msg: '正在测试连接…' });
     try {
-      const out = await testProvider(createProvider(target, makeContext(target, proxyUrl, proxyToken)));
+      const out = await testProvider(createProvider(target, makeContext(target, pUrl, pTok)));
       setTest({ state: 'ok', msg: out.slice(0, 160) });
       if (saveOnOk) saveCfg(target);
     } catch (e) {
       const msg = describeError(e);
-      const corsHint = !isDesktop && !target.useProxy && /Failed to fetch|Load failed|NetworkError|CORS/i.test(msg);
-      setTest({ state: 'error', msg, corsHint });
+      if (!isDesktop && !target.useProxy && isNetworkOrCorsError(msg)) {
+        setTest({ state: 'running', msg: '检测到浏览器跨域拦截，正在自动探测代理并重试…' });
+        const found = await detectAvailableProxy(pUrl);
+        if (found) {
+          setSettings({ proxyUrl: found });
+          const next = { ...target, useProxy: true };
+          patch({ useProxy: true });
+          try {
+            const out2 = await testProvider(createProvider(next, makeContext(next, found, pTok)));
+            setTest({ state: 'ok', msg: `已自动开启代理并连接成功：${out2.slice(0, 140)}` });
+            if (saveOnOk) saveCfg(next);
+            return;
+          } catch (e2) {
+            const msg2 = describeError(e2);
+            setTest({ state: 'error', msg: msg2 });
+            const wiz = classifyProxyErr(msg2, retryAction, found);
+            if (wiz) setProxyWizard(wiz);
+            return;
+          }
+        }
+        setTest({ state: 'error', msg });
+        setProxyWizard({ reason: 'missing', retryAction, detectedUrl: pUrl || defaultProxyUrl() });
+        return;
+      }
+      if (!isDesktop && target.useProxy) {
+        const wiz = classifyProxyErr(msg, retryAction, pUrl);
+        if (wiz) {
+          setTest({ state: 'error', msg });
+          setProxyWizard(wiz);
+          return;
+        }
+        if (isNetworkOrCorsError(msg) && !(await probeProxy(pUrl))) {
+          setTest({ state: 'error', msg: `无法连接到代理服务（${pUrl || '未填写'}）` });
+          setProxyWizard({ reason: 'missing', retryAction, detectedUrl: pUrl || defaultProxyUrl() });
+          return;
+        }
+      }
+      setTest({ state: 'error', msg });
     }
   };
 
-  const fetchModels = async () => {
+  const requestModels = async (target: ProviderConfig, pUrl: string, pTok: string) => {
+    const base = (target.baseUrl || 'https://api.openai.com/v1').replace(/\/+$/, '').replace(/\/chat\/completions$/, '');
+    const res = await makeContext(target, pUrl, pTok).fetch(`${base}/models`, {
+      headers: target.apiKey ? { Authorization: `Bearer ${target.apiKey}` } : {},
+    });
+    await ensureOk(res);
+    const json = (await res.json()) as { data?: { id: string }[]; models?: { name: string }[] };
+    return (json.data?.map((m) => m.id) ?? json.models?.map((m) => m.name) ?? []).sort();
+  };
+
+  const fetchModels = async (override?: Partial<ProviderConfig>, proxyOverride?: { proxyUrl?: string; proxyToken?: string }) => {
+    const target = { ...cfg, ...override };
+    const pUrl = proxyOverride?.proxyUrl ?? useSettings.getState().proxyUrl;
+    const pTok = proxyOverride?.proxyToken ?? useSettings.getState().proxyToken;
+    if (override) patch(override);
     setFetchingModels(true);
+    setProxyWizard(null);
+    setWizardNote('');
     try {
-      const base = (cfg.baseUrl || 'https://api.openai.com/v1').replace(/\/+$/, '').replace(/\/chat\/completions$/, '');
-      const res = await makeContext(cfg, proxyUrl, proxyToken).fetch(`${base}/models`, {
-        headers: cfg.apiKey ? { Authorization: `Bearer ${cfg.apiKey}` } : {},
-      });
-      await ensureOk(res);
-      const json = (await res.json()) as { data?: { id: string }[]; models?: { name: string }[] };
-      const ids = (json.data?.map((m) => m.id) ?? json.models?.map((m) => m.name) ?? []).sort();
+      const ids = await requestModels(target, pUrl, pTok);
       setModels(ids);
       if (!ids.length) setTest({ state: 'error', msg: '没有返回模型列表' });
-      else if (!cfg.model) patch({ model: ids[0] });
+      else {
+        if (!target.model) patch({ model: ids[0] });
+        setTest({ state: 'ok', msg: `已获取 ${ids.length} 个模型` });
+      }
     } catch (e) {
-      setTest({ state: 'error', msg: `获取模型列表失败：${describeError(e)}` });
+      const msg = describeError(e);
+      if (!isDesktop && !target.useProxy && isNetworkOrCorsError(msg)) {
+        setTest({ state: 'running', msg: '检测到浏览器跨域拦截，正在自动探测代理并重试获取模型…' });
+        const found = await detectAvailableProxy(pUrl);
+        if (found) {
+          setSettings({ proxyUrl: found });
+          const next = { ...target, useProxy: true };
+          patch({ useProxy: true });
+          try {
+            const ids = await requestModels(next, found, pTok);
+            setModels(ids);
+            if (!ids.length) setTest({ state: 'error', msg: '没有返回模型列表' });
+            else {
+              if (!next.model) patch({ model: ids[0] });
+              setTest({ state: 'ok', msg: `已自动开启代理，获取到 ${ids.length} 个模型` });
+            }
+            return;
+          } catch (e2) {
+            const msg2 = describeError(e2);
+            setTest({ state: 'error', msg: `获取模型列表失败：${msg2}` });
+            const wiz = classifyProxyErr(msg2, 'models', found);
+            if (wiz) setProxyWizard(wiz);
+            return;
+          }
+        }
+        setTest({ state: 'error', msg: `获取模型列表失败：${msg}` });
+        setProxyWizard({ reason: 'missing', retryAction: 'models', detectedUrl: pUrl || defaultProxyUrl() });
+        return;
+      }
+      if (!isDesktop && target.useProxy) {
+        const wiz = classifyProxyErr(msg, 'models', pUrl);
+        if (wiz) {
+          setTest({ state: 'error', msg: `获取模型列表失败：${msg}` });
+          setProxyWizard(wiz);
+          return;
+        }
+        if (isNetworkOrCorsError(msg) && !(await probeProxy(pUrl))) {
+          setTest({ state: 'error', msg: `无法连接到代理服务（${pUrl || '未填写'}）` });
+          setProxyWizard({ reason: 'missing', retryAction: 'models', detectedUrl: pUrl || defaultProxyUrl() });
+          return;
+        }
+      }
+      setTest({ state: 'error', msg: `获取模型列表失败：${msg}` });
     } finally {
       setFetchingModels(false);
     }
+  };
+
+  const applyWizardAndRetry = async () => {
+    if (!proxyWizard) return;
+    setWizardBusy(true);
+    setWizardNote('');
+    try {
+      const s = useSettings.getState();
+      let candidate = s.proxyUrl.trim().replace(/\/+$/, '');
+      if (proxyWizard.reason === 'missing') {
+        const alive = candidate ? (await probeProxy(candidate) ? candidate : null) : await detectAvailableProxy();
+        if (!alive) {
+          setWizardNote(`暂时连不上 ${candidate || defaultProxyUrl()}，请确认代理已启动或填写正确的代理地址。`);
+          return;
+        }
+        candidate = alive;
+      } else if (!candidate) {
+        candidate = proxyWizard.detectedUrl || defaultProxyUrl();
+      }
+      setSettings({ proxyUrl: candidate });
+      const action = proxyWizard.retryAction;
+      setProxyWizard(null);
+      if (action === 'models') {
+        await fetchModels({ useProxy: true }, { proxyUrl: candidate, proxyToken: s.proxyToken });
+      } else {
+        await runTest({ useProxy: true }, action === 'testAndSave', { proxyUrl: candidate, proxyToken: s.proxyToken });
+      }
+    } finally {
+      setWizardBusy(false);
+    }
+  };
+
+  const localCmd = proxyWizard?.reason === 'host' && proxyWizard.host
+    ? `ALLOWED_HOSTS=${proxyWizard.host} node proxy/server.mjs`
+    : 'ALLOWED_HOSTS=* node proxy/server.mjs';
+
+  const copyLocalCmd = () => {
+    void navigator.clipboard.writeText(localCmd);
+    setCmdCopied(true);
+    setTimeout(() => setCmdCopied(false), 1800);
   };
 
   const canSave = !!(cfg.name.trim() || preset) && (!llm || !!cfg.model?.trim());
@@ -584,14 +822,92 @@ function ProviderEditor({ onDone }: { onDone: () => void }) {
           style={{ marginBottom: 12, color: test.state === 'ok' ? 'var(--success)' : undefined }}
         >
           <div>
-            {test.state === 'running' && <span className="spinner" />} {test.state === 'running' && '正在测试连接…'}
-            {test.state === 'ok' && `✓ 连接成功：${test.msg}`}
+            {test.state === 'running' && <span className="spinner" />} {test.state === 'running' && (test.msg || '正在测试连接…')}
+            {test.state === 'ok' && `✓ ${test.msg}`}
             {test.state === 'error' && test.msg}
           </div>
-          {test.corsHint && (
-            <button className="btn sm" style={{ marginTop: 6 }} onClick={() => void runTest({ useProxy: true }, false)}>
-              可能是跨域拦截 → 一键启用代理并重试
+        </div>
+      )}
+
+      {!isDesktop && proxyWizard && (
+        <div className="proxy-wizard">
+          <div className="proxy-wizard-title">
+            {proxyWizard.reason === 'token'
+              ? '已自动检测到中转代理，还需完成令牌认证'
+              : proxyWizard.reason === 'host'
+                ? '中转代理拒绝了该接口域名（不在白名单中）'
+                : '自动配置跨域中转代理'}
+          </div>
+          <div className="proxy-wizard-desc">
+            {proxyWizard.reason === 'token' &&
+              '浏览器直连该接口被跨域（CORS）拦截，系统已自动为你勾选「通过中转代理请求」。请登录「云同步」自动获取代理令牌，或在下方直接填入代理令牌：'}
+            {proxyWizard.reason === 'host' &&
+              `代理服务 ${proxyWizard.detectedUrl || proxyUrl} 未放行 ${proxyWizard.host || '该域名'}。请在代理端设置 ALLOWED_HOSTS=*（或加入该域名）后重试，或切换其他代理地址：`}
+            {proxyWizard.reason === 'missing' &&
+              '该接口不支持浏览器直接跨域访问，且当前未检测到运行中的中转代理。你可以直接填写自建代理地址、登录自建云同步自动配置，或在本地运行下方命令：'}
+          </div>
+
+          <div className="grid2">
+            <div className="field" style={{ marginBottom: 8 }}>
+              <label>代理地址</label>
+              <input
+                className="input"
+                value={proxyUrl}
+                onChange={(e) => setSettings({ proxyUrl: e.target.value.trim() })}
+                placeholder={proxyWizard.detectedUrl || 'http://127.0.0.1:8787'}
+              />
+            </div>
+            <div className="field" style={{ marginBottom: 8 }}>
+              <label>代理令牌（PROXY_TOKEN，无密码可留空）</label>
+              <input
+                className="input"
+                type="password"
+                value={proxyToken}
+                onChange={(e) => setSettings({ proxyToken: e.target.value.trim() })}
+                placeholder="填写代理令牌"
+                autoComplete="off"
+                onKeyDown={(e) => e.key === 'Enter' && void applyWizardAndRetry()}
+              />
+            </div>
+          </div>
+
+          {wizardNote && (
+            <div className="error-box" style={{ marginBottom: 8 }}>
+              {wizardNote}
+            </div>
+          )}
+
+          <div className="row" style={{ flexWrap: 'wrap' }}>
+            <button className="btn primary sm" disabled={wizardBusy} onClick={() => void applyWizardAndRetry()}>
+              {wizardBusy ? '检测并重试中…' : '应用代理并自动重试'}
             </button>
+            {!syncLoggedIn && (
+              <button className="btn sm" onClick={() => onOpenSection('sync')}>
+                登录云同步（自动填代理）→
+              </button>
+            )}
+            <div className="spacer" />
+            <button className="btn sm ghost" onClick={() => setProxyWizard(null)}>
+              收起
+            </button>
+          </div>
+
+          {(proxyWizard.reason === 'missing' || proxyWizard.reason === 'host') && (
+            <>
+              <div className="proxy-wizard-cmd">
+                <code>{localCmd}</code>
+                <button className="btn sm ghost" onClick={copyLocalCmd}>
+                  {cmdCopied ? '已复制' : '复制命令'}
+                </button>
+              </div>
+              <div className="hint" style={{ marginTop: 6 }}>
+                提示：也可以直接使用{' '}
+                <a href="https://github.com/royhang/PaperBridge/releases/latest" target="_blank" rel="noreferrer">
+                  Windows 桌面客户端
+                </a>
+                ，已内置跨域代理，无需任何代理配置。
+              </div>
+            </>
           )}
         </div>
       )}
@@ -621,8 +937,10 @@ function ProviderEditor({ onDone }: { onDone: () => void }) {
 
 // ---------------------------------------------------------------- cloud sync
 
-function SyncSection() {
+function SyncSection({ onOpenSection }: { onOpenSection: (s: SettingsSection) => void }) {
   const sync = useSync();
+  const hasProviderDraft = useSettingsDraft((s) => !!s.editingProvider);
+  const proxyToken = useSettings((s) => s.proxyToken);
   const draft = useSettingsDraft((s) => s.syncDraft);
   const setDraft = useSettingsDraft((s) => s.setSyncDraft);
   const clearDraft = useSettingsDraft((s) => s.clearSyncDraft);
@@ -721,16 +1039,24 @@ function SyncSection() {
 
         <div className="hint" style={{ margin: '8px 0 16px', lineHeight: 1.6 }}>
           同步内容包括：文献题录、PDF 原文（SHA-256 去重）、分类、标签、阅读进度、高亮笔记、术语表、AI 对话与翻译缓存。所有数据始终优先保存在本地，断网也可离线阅读。
+          {!desktop() && proxyToken && '（已自动同步该服务器的中转代理地址与令牌，网页版配置 API 时无需手动填写代理。）'}
         </div>
 
-        <button
-          className="btn danger"
-          onClick={() => {
-            if (confirm('退出当前同步账号？本地已保存的文献和笔记不会被删除。')) void logoutAccount();
-          }}
-        >
-          退出登录
-        </button>
+        <div className="row">
+          {hasProviderDraft && (
+            <button className="btn primary" onClick={() => onOpenSection('providers')}>
+              ← 返回继续配置 API
+            </button>
+          )}
+          <button
+            className="btn danger"
+            onClick={() => {
+              if (confirm('退出当前同步账号？本地已保存的文献和笔记不会被删除。')) void logoutAccount();
+            }}
+          >
+            退出登录
+          </button>
+        </div>
       </>
     );
   }
@@ -908,10 +1234,11 @@ function PromptsSection() {
   );
 }
 
-function ProxySection() {
+function ProxySection({ onOpenSection }: { onOpenSection: (s: SettingsSection) => void }) {
   const proxyUrl = useSettings((s) => s.proxyUrl);
   const proxyToken = useSettings((s) => s.proxyToken);
   const set = useSettings((s) => s.set);
+  const syncLoggedIn = useSync((s) => !!(s.token && s.username));
   const [status, setStatus] = useState('');
   const d = desktop();
   if (d)
@@ -923,14 +1250,23 @@ function ProxySection() {
   return (
     <>
       <p className="hint" style={{ marginTop: 0 }}>
-        浏览器会阻止网页直接调用不支持跨域（CORS）的接口，例如 DeepL、百度、有道。在本机运行项目自带的零依赖代理即可：
+        浏览器会阻止网页直接调用不支持跨域（CORS）的接口（例如学校/中转站接口、DeepL、百度、有道）。当检测到可用代理时，新建 API 会自动默认开启中转代理。
       </p>
-      <pre className="source-quote" style={{ fontFamily: 'ui-monospace, monospace' }}>node proxy/server.mjs</pre>
-      <p className="hint">
-        代理默认只放行常见服务商域名。如果你的 API 是自建或学校/公司的服务（例如 chat.example.edu.cn），请把域名加入白名单：
-      </p>
-      <pre className="source-quote" style={{ fontFamily: 'ui-monospace, monospace' }}>ALLOWED_HOSTS=chat.example.edu.cn node proxy/server.mjs</pre>
-      <p className="hint">也可以部署 proxy/worker.js 到 Cloudflare Workers。OpenAI / Claude / Gemini 和多数国内大模型无需代理。</p>
+      {!syncLoggedIn && (
+        <div className="sync-card" style={{ marginBottom: 12 }}>
+          <div className="row">
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontWeight: 600, fontSize: 13 }}>有自建同步服务器？</div>
+              <div className="hint">登录「云同步」后会自动填入代理地址与代理令牌，无需手动配置。</div>
+            </div>
+            <button className="btn sm primary" onClick={() => onOpenSection('sync')}>
+              前往云同步 →
+            </button>
+          </div>
+        </div>
+      )}
+      <pre className="source-quote" style={{ fontFamily: 'ui-monospace, monospace' }}>ALLOWED_HOSTS=* node proxy/server.mjs</pre>
+      <p className="hint">也可在本机运行上述零依赖代理命令，或部署 proxy/worker.js 到 Cloudflare Workers。</p>
       <div className="field">
         <label>代理地址</label>
         <input className="input" value={proxyUrl} onChange={(e) => set({ proxyUrl: e.target.value.trim() })} placeholder="http://127.0.0.1:8787" />
@@ -939,20 +1275,31 @@ function ProxySection() {
         <label>代理令牌（可选，对应 PROXY_TOKEN）</label>
         <input className="input" type="password" value={proxyToken} onChange={(e) => set({ proxyToken: e.target.value })} />
       </div>
-      <div className="row">
+      <div className="row" style={{ flexWrap: 'wrap' }}>
+        <button
+          className="btn primary"
+          onClick={async () => {
+            setStatus('正在自动探测可用代理…');
+            const found = await detectAvailableProxy(proxyUrl);
+            if (found) {
+              set({ proxyUrl: found });
+              setStatus(`✓ 已自动检测到可用代理：${found}`);
+            } else {
+              setStatus('未检测到运行中的代理（请检查代理地址或先运行 node proxy/server.mjs）');
+            }
+          }}
+        >
+          自动探测代理
+        </button>
         <button
           className="btn"
           onClick={async () => {
             setStatus('检测中…');
-            try {
-              const r = await fetch(`${proxyUrl.replace(/\/+$/, '')}/health`);
-              setStatus(r.ok ? '✓ 代理可用' : `代理返回 HTTP ${r.status}`);
-            } catch (e) {
-              setStatus(`无法连接代理：${e instanceof Error ? e.message : e}`);
-            }
+            const ok = await probeProxy(proxyUrl);
+            setStatus(ok ? '✓ 代理可用' : `无法连接代理：${proxyUrl || '未填写地址'}`);
           }}
         >
-          检测代理
+          检测当前地址
         </button>
         <span className="hint">{status}</span>
       </div>
