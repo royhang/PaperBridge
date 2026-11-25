@@ -1,0 +1,63 @@
+{
+  "name": "paperbridge-desktop",
+  "productName": "PaperBridge",
+  "version": "0.1.0",
+  "description": "PaperBridge 文献阅读翻译 — 桌面客户端",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "main": "main.mjs",
+  "scripts": {
+    "prepare-web": "node scripts/prepare.mjs",
+    "start": "node scripts/prepare.mjs && electron .",
+    "dist:win": "node scripts/prepare.mjs && electron-builder --win zip --x64",
+    "dist:linux": "node scripts/prepare.mjs && electron-builder --linux AppImage --x64",
+    "dist:mac": "node scripts/prepare.mjs && electron-builder --mac dmg"
+  },
+  "build": {
+    "appId": "io.github.paperbridge.desktop",
+    "productName": "PaperBridge",
+    "artifactName": "PaperBridge-${version}-${os}-${arch}.${ext}",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "main.mjs",
+      "preload.cjs",
+      "web/**",
+      "proxy/**",
+      "build/icon.png",
+      "package.json"
+    ],
+    "asar": true,
+    "win": {
+      "signAndEditExecutable": false
+    },
+    "linux": {
+      "category": "Education"
+    },
+    "mac": {
+      "category": "public.app-category.education"
+    },
+    "fileAssociations": [
+      {
+        "ext": "pdf",
+        "name": "PDF",
+        "description": "PDF 文献",
+        "role": "Viewer"
+      }
+    ],
+    "afterPack": "scripts/after-pack.mjs"
+  },
+  "devDependencies": {
+    "electron": "^45.4.1",
+    "electron-builder": "^26.18.0",
+    "resedit": "^3.1.1"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "electron"
+    ]
+  },
+  "author": "PaperBridge contributors"
+}

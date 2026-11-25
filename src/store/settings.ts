@@ -1,0 +1,112 @@
+import { create } from 'zustand';
+import { persist } from 'zustand/middleware';
+import type { LangCode, ProviderConfig } from '../providers/types';
+
+export type Theme = 'system' | 'light' | 'dark';
+export type SelectionAction = 'popup' | 'auto-translate' | 'none';
+
+export interface PromptTemplates {
+  /** Used for selection + full-text translation with LLMs. Placeholders: {{from}} {{to}} {{glossary}} {{context}} */
+  translateSystem: string;
+  /** Explain selected text. Placeholders: {{to}} */
+  explainSystem: string;
+  /** Q&A about the paper. Placeholders: {{to}} {{title}} */
+  chatSystem: string;
+}
+
+export const DEFAULT_PROMPTS: PromptTemplates = {
+  translateSystem: `You are a professional academic translator. Translate the user's text from {{from}} into {{to}}.
+Rules:
+- Keep academic tone, accuracy and terminology; do not add explanations.
+- Keep LaTeX/math, citations like [12] or (Smith et al., 2020), URLs, code and variable names unchanged.
+- Fix broken words caused by PDF line breaks.
+- Output ONLY the translation.{{glossary}}{{context}}`,
+  explainSystem: `You are a patient research mentor. The user selected a passage from an academic paper. Explain it in {{to}}: what it means, key terms, and any formulas or notation, using concise Markdown. Use $...$ for inline math.`,
+  chatSystem: `You are a research assistant helping the user read the paper "{{title}}". Answer in {{to}} using concise Markdown, grounded in the paper text provided. When citing, refer to the page number like (p.3). If the paper does not contain the answer, say so. Use $...$ / $$...$$ for math.`,
+};
+
+export interface Settings {
+  providers: ProviderConfig[];
+  /** Provider used for selection and full-text translation. */
+  translateProviderId: string | null;
+  /** LLM used for explain / chat / summary. */
+  chatProviderId: string | null;
+  sourceLang: LangCode;
+  targetLang: LangCode;
+  proxyUrl: string;
+  proxyToken: string;
+  selectionAction: SelectionAction;
+  theme: Theme;
+  /** Max parallel requests during full-text translation. */
+  concurrency: number;
+  /** Paragraphs per LLM request in full-text mode. */
+  batchSize: number;
+  prompts: PromptTemplates;
+  readerFontSize: number;
+  /** extract the paper's key terms into its glossary before a fresh full-text translation */
+  autoTerms: boolean;
+}
+
+/**
+ * Local dev → the standalone proxy on :8787. Deployed (any other host) → the
+ * proxy served by the same web server under /proxy (same origin, no CORS).
+ */
+export function defaultProxyUrl(): string {
+  if (import.meta.env.DEV || typeof location === 'undefined') return 'http://127.0.0.1:8787';
+  return new URL('.', location.href).href.replace(/\/+$/, '');
+}
+
+interface SettingsStore extends Settings {
+  set: (patch: Partial<Settings>) => void;
+  upsertProvider: (p: ProviderConfig) => void;
+  removeProvider: (id: string) => void;
+}
+
+export const useSettings = create<SettingsStore>()(
+  persist(
+    (set) => ({
+      providers: [],
+      translateProviderId: null,
+      chatProviderId: null,
+      sourceLang: 'auto',
+      targetLang: 'zh-CN',
+      proxyUrl: defaultProxyUrl(),
+      proxyToken: '',
+      selectionAction: 'popup',
+      theme: 'system',
+      concurrency: 5,
+      batchSize: 6,
+      prompts: DEFAULT_PROMPTS,
+      readerFontSize: 15,
+      autoTerms: true,
+      set: (patch) => set(patch),
+      upsertProvider: (p) =>
+        set((s) => {
+          const exists = s.providers.some((x) => x.id === p.id);
+          const providers = exists ? s.providers.map((x) => (x.id === p.id ? p : x)) : [...s.providers, p];
+          return {
+            providers,
+            translateProviderId: s.translateProviderId ?? p.id,
+            chatProviderId:
+              s.chatProviderId ?? (['openai', 'anthropic', 'gemini'].includes(p.kind) ? p.id : null),
+          };
+        }),
+      removeProvider: (id) =>
+        set((s) => ({
+          providers: s.providers.filter((x) => x.id !== id),
+          translateProviderId: s.translateProviderId === id ? null : s.translateProviderId,
+          chatProviderId: s.chatProviderId === id ? null : s.chatProviderId,
+        })),
+    }),
+    {
+      name: 'paperbridge-settings',
+      version: 1,
+      merge: (persisted, current) => {
+        const p = (persisted ?? {}) as Partial<Settings>;
+        return { ...current, ...p, prompts: { ...DEFAULT_PROMPTS, ...(p.prompts ?? {}) } };
+      },
+    },
+  ),
+);
+
+export const getSettings = () => useSettings.getState();
