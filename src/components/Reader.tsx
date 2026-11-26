@@ -168,6 +168,8 @@ function Toolbar({ active }: { active: boolean }) {
   const setViewMode = useReader((s) => s.setViewMode);
   const inkTool = useReader((s) => s.inkTool);
   const setInkTool = useReader((s) => s.setInkTool);
+  const focusMode = useReader((s) => s.focusMode);
+  const toggleFocusMode = useReader((s) => s.toggleFocusMode);
   const pagesDone = useReader((s) => Object.values(s.pageStates).filter((p) => p.status === 'done' || p.status === 'skipped').length);
   const running = useReader((s) => s.fullTextRunning);
   const [pageInput, setPageInput] = useState('');
@@ -201,6 +203,10 @@ function Toolbar({ active }: { active: boolean }) {
         e.preventDefault();
         st.setScale(st.scale / 1.1);
       } else if (e.key === 'Escape') {
+        if (st.focusMode) {
+          st.setFocusMode(false);
+          if (document.fullscreenElement) void document.exitFullscreen().catch(() => {});
+        }
         st.setSelection(null);
         st.setPinnedSelection(null);
         window.getSelection()?.removeAllRanges();
@@ -212,7 +218,15 @@ function Toolbar({ active }: { active: boolean }) {
 
   return (
     <div className="toolbar">
-      <button className="icon-btn" title="返回我的文库 (Alt+1)" onClick={() => useTabs.getState().activateLibrary()}>
+      <button
+        className="icon-btn"
+        title="返回我的文库 (Alt+1)"
+        onClick={() => {
+          useReader.getState().setFocusMode(false);
+          if (document.fullscreenElement) void document.exitFullscreen().catch(() => {});
+          useTabs.getState().activateLibrary();
+        }}
+      >
         <Icon name="back" size={16} />
       </button>
       <div className="doc-title" title={title}>
@@ -288,6 +302,23 @@ function Toolbar({ active }: { active: boolean }) {
         onClick={() => setInkTool(inkTool === 'none' ? 'pen' : 'none')}
       >
         <Icon name="edit" size={16} />
+      </button>
+      <button
+        className={`icon-btn${focusMode ? ' active' : ''}`}
+        title={focusMode ? '退出沉浸阅读 (Esc)' : '沉浸阅读（隐藏顶部标签栏并最大化视野）'}
+        onClick={() => {
+          const next = !focusMode;
+          toggleFocusMode();
+          if (next) {
+            if (document.documentElement.requestFullscreen) {
+              void document.documentElement.requestFullscreen().catch(() => {});
+            }
+          } else if (document.fullscreenElement) {
+            void document.exitFullscreen().catch(() => {});
+          }
+        }}
+      >
+        <Icon name={focusMode ? 'minimize' : 'maximize'} size={15} />
       </button>
       <button className="icon-btn" title="导出译文 PDF（保留原排版）" disabled={!pdf} onClick={() => setExporting(true)}>
         <Icon name="download" size={16} />

@@ -86,12 +86,16 @@ interface ReaderStore {
   penWidth: number;
   /** Palm rejection: on touch/iPadOS, only Apple Pencil (`pointerType === 'pen'`) draws while fingers scroll/pinch. */
   pencilOnly: boolean;
+  /** Immersive reading mode: collapses the top tab bar to maximize reading & Apple Pencil canvas on iPadOS/laptop. */
+  focusMode: boolean;
 
   setInkTool: (t: InkTool) => void;
   setPenColor: (c: string) => void;
   setHlColor: (c: string) => void;
   setPenWidth: (w: number) => void;
   setPencilOnly: (b: boolean) => void;
+  setFocusMode: (b: boolean) => void;
+  toggleFocusMode: () => void;
   handoffTo: (target: 'glossary' | 'chat', text: string, pin?: PinnedSelection) => void;
   consumeHandoff: () => void;
   open: (docId: string, title: string, pdf: PDFDocumentProxy, page: number, snapshot?: ReaderSnapshot) => void;
@@ -140,12 +144,15 @@ export const useReader = create<ReaderStore>()((set) => ({
   hlColor: '#facc15',
   penWidth: 2.2,
   pencilOnly: typeof window !== 'undefined' && !!window.matchMedia?.('(pointer: coarse)').matches,
+  focusMode: false,
 
   setInkTool: (inkTool) => set({ inkTool, selection: null }),
   setPenColor: (penColor) => set({ penColor }),
   setHlColor: (hlColor) => set({ hlColor }),
   setPenWidth: (penWidth) => set({ penWidth }),
   setPencilOnly: (pencilOnly) => set({ pencilOnly }),
+  setFocusMode: (focusMode) => set({ focusMode }),
+  toggleFocusMode: () => set((s) => ({ focusMode: !s.focusMode })),
 
   handoffTo: (target, text, pin) =>
     set((s) => ({

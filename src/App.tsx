@@ -10,6 +10,7 @@ import type { SettingsSection } from './lib/nav';
 import { importPdfBytes, saveConnectorItem, type ConnectorSavePayload } from './library/service';
 import { initAutoSync } from './services/sync';
 import { useSettings } from './store/settings';
+import { useReader } from './store/reader';
 import { useTabs } from './store/tabs';
 
 function applyHash(hash: string) {
@@ -34,6 +35,7 @@ function applyHash(hash: string) {
 export default function App() {
   const active = useTabs((s) => s.active);
   const lastDocId = useTabs((s) => s.lastDocId);
+  const focusMode = useReader((s) => s.focusMode);
   const theme = useSettings((s) => s.theme);
   const fontSize = useSettings((s) => s.readerFontSize);
   const [settingsOpen, setSettingsOpen] = useState<SettingsSection | null>(null);
@@ -171,10 +173,11 @@ export default function App() {
   }, []);
 
   const mountedDocId = active.kind === 'doc' ? active.docId : lastDocId;
+  const hideTabBar = active.kind === 'doc' && focusMode;
 
   return (
     <div className="app-shell">
-      <TabBar />
+      {!hideTabBar && <TabBar />}
       <div className="app-stage">
         {/* Keep Library mounted so scroll position, search, and selection persist across tab switches */}
         <div className="stage-pane" style={{ display: active.kind === 'library' ? 'flex' : 'none' }}>
