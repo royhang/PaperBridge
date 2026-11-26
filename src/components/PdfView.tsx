@@ -108,7 +108,7 @@ export function PdfView() {
     c.scrollTo({ top: el.offsetTop + Math.max(y, -PAGE_GAP), behavior: 'smooth' });
   }, [scrollTarget, sizesReady]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ---- fit the width when the view mode changes (two pages side by side need a smaller scale)
+  // ---- fit the width when the view mode changes (and on first open on iPad / narrow screens)
   const fitted = useRef('');
   useEffect(() => {
     const c = containerRef.current;
@@ -116,14 +116,18 @@ export function PdfView() {
     if (!c || !sizesReady || fitted.current === key) return;
     const first = !fitted.current.startsWith(`${docId}:`);
     fitted.current = key;
-    if (first && viewMode === 'original') return; // keep the user's zoom on open
     const maxW = Math.max(...sizes.map((s) => s.w));
     const cols = viewMode === 'dual' ? 2 : 1;
     const fit = (c.clientWidth - 32 - (cols - 1) * PAGE_GAP - 16) / (cols * maxW);
+    if (first && viewMode === 'original') {
+      // On desktop keep the user's zoom; on iPad portrait / Split View auto-fit so pages don't clip horizontally
+      if (c.clientWidth < 860 && fit > 0.5) setScale(Math.min(1.3, fit));
+      return;
+    }
     setScale(cols === 2 ? fit : Math.min(1.3, fit));
   }, [viewMode, sizesReady, sizes, docId, setScale]);
 
-  // ---- ctrl + wheel zoom
+  // ---- ctrl + wheel zoom & iPadOS two-finger pinch-to-zoom
   useEffect(() => {
     const c = containerRef.current;
     if (!c) return;
@@ -133,20 +137,57 @@ export function PdfView() {
       const s = useReader.getState().scale;
       setScale(s * (e.deltaY < 0 ? 1.1 : 1 / 1.1));
     };
+    let pinchStartDist = 0;
+    let pinchStartScale = 1;
+    let pinchRaf = 0;
+    let pendingScale = 0;
+    const distOf = (t: TouchList) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+    const onTouchStart = (e: TouchEvent) => {
+      if (e.touches.length === 2) {
+        pinchStartDist = distOf(e.touches);
+        pinchStartScale = useReader.getState().scale;
+      }
+    };
+    const onTouchMove = (e: TouchEvent) => {
+      if (e.touches.length !== 2 || !pinchStartDist) return;
+      e.preventDefault();
+      const ratio = distOf(e.touches) / pinchStartDist;
+      pendingScale = pinchStartScale * ratio;
+      if (!pinchRaf) {
+        pinchRaf = requestAnimationFrame(() => {
+          pinchRaf = 0;
+          if (pendingScale) setScale(pendingScale);
+        });
+      }
+    };
+    const onTouchEnd = (e: TouchEvent) => {
+      if (e.touches.length < 2) pinchStartDist = 0;
+    };
     c.addEventListener('wheel', onWheel, { passive: false });
-    return () => c.removeEventListener('wheel', onWheel);
+    c.addEventListener('touchstart', onTouchStart, { passive: true });
+    c.addEventListener('touchmove', onTouchMove, { passive: false });
+    c.addEventListener('touchend', onTouchEnd, { passive: true });
+    return () => {
+      c.removeEventListener('wheel', onWheel);
+      c.removeEventListener('touchstart', onTouchStart);
+      c.removeEventListener('touchmove', onTouchMove);
+      c.removeEventListener('touchend', onTouchEnd);
+      if (pinchRaf) cancelAnimationFrame(pinchRaf);
+    };
   }, [setScale]);
 
-  // ---- text selection → floating toolbar
-  const onMouseUp = useCallback(() => {
-    // wait a tick so the selection is final (double/triple click)
-    setTimeout(() => {
+  // ---- text selection → floating toolbar (mouse + iPadOS touch / Apple Pencil selectionchange)
+  const readSelection = useCallback(
+    (triggerAuto = true) => {
       const sel = window.getSelection();
       if (!sel || sel.isCollapsed || sel.rangeCount === 0) {
         setSelection(null);
-        if (useReader.getState().pinnedSelection) useReader.getState().setPinnedSelection(null);
+        if (triggerAuto && useReader.getState().pinnedSelection) useReader.getState().setPinnedSelection(null);
         return;
       }
+      // Only handle selections inside this PDF viewer
+      const anchorNode = sel.anchorNode;
+      if (!containerRef.current || !anchorNode || !containerRef.current.contains(anchorNode)) return;
       const text = cleanSelectedText(sel.toString());
       if (!text) {
         setSelection(null);
@@ -181,13 +222,33 @@ export function PdfView() {
         pageIndex,
         rects: merged,
         multiPage: byPage.size > 1,
-        anchor: { x: box.left + box.width / 2, y: box.top },
+        anchor: { x: box.left + box.width / 2, y: box.top, bottom: box.bottom },
       });
-      if (useSettings.getState().selectionAction === 'auto-translate') {
+      if (triggerAuto && useSettings.getState().selectionAction === 'auto-translate') {
         useReader.getState().startJob(text, 'translate', pageIndex, merged);
       }
-    }, 10);
-  }, [setSelection]);
+    },
+    [setSelection],
+  );
+
+  const onMouseUp = useCallback(() => {
+    setTimeout(() => readSelection(true), 10);
+  }, [readSelection]);
+
+  // iPadOS / iOS Safari updates text selection via touch handles without firing mouseup
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const onSelChange = () => {
+      if (!window.matchMedia?.('(pointer: coarse)').matches) return;
+      clearTimeout(timer);
+      timer = setTimeout(() => readSelection(true), 220);
+    };
+    document.addEventListener('selectionchange', onSelChange);
+    return () => {
+      clearTimeout(timer);
+      document.removeEventListener('selectionchange', onSelChange);
+    };
+  }, [readSelection]);
 
   return (
     <div
@@ -203,6 +264,9 @@ export function PdfView() {
       onMouseUp={() => {
         containerRef.current?.querySelectorAll('.textLayer.selecting').forEach((el) => el.classList.remove('selecting'));
         onMouseUp();
+      }}
+      onTouchEnd={() => {
+        setTimeout(() => readSelection(true), 120);
       }}
     >
       <div className="pages">

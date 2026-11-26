@@ -314,13 +314,18 @@ function SelectionToolbar() {
     done();
   };
 
-  const top = Math.max(88, sel.anchor.y);
+  // On touch / iPadOS Safari, place the toolbar BELOW the selection so it never collides with iOS's native Copy/Look Up bar above.
+  const isTouch = typeof window !== 'undefined' && !!window.matchMedia?.('(pointer: coarse)').matches;
+  const placeBelow = isTouch && sel.anchor.bottom !== undefined && sel.anchor.bottom < window.innerHeight - 96;
+  const top = placeBelow ? sel.anchor.bottom! + 12 : Math.max(88, sel.anchor.y);
   return (
     <div
       ref={ref}
-      className="sel-toolbar"
-      style={{ left: Math.min(Math.max(sel.anchor.x, 160), window.innerWidth - 160), top }}
+      className={`sel-toolbar${placeBelow ? ' below' : ''}`}
+      style={{ left: Math.min(Math.max(sel.anchor.x, 168), window.innerWidth - 168), top }}
       onMouseDown={(e) => e.preventDefault()}
+      onPointerDown={(e) => e.preventDefault()}
+      onTouchStart={(e) => e.stopPropagation()}
       onMouseUp={(e) => e.stopPropagation()}
     >
       <button className="btn" onClick={() => (startJob(sel.text, 'translate', sel.pageIndex, sel.rects), done())}>

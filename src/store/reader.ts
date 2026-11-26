@@ -11,8 +11,8 @@ export interface SelectionInfo {
   rects: NRect[];
   /** Selection spans pages — highlight would only cover one page, so it's disabled. */
   multiPage?: boolean;
-  /** Viewport position for the floating toolbar. */
-  anchor: { x: number; y: number };
+  /** Viewport position for the floating toolbar (`bottom` used on touch/iPadOS to avoid native callout). */
+  anchor: { x: number; y: number; bottom?: number };
 }
 
 /** A request for the side panel's translate tab. */
@@ -109,7 +109,7 @@ export const useReader = create<ReaderStore>()((set) => ({
   scale: 1.3,
   currentPage: 0,
   sideTab: 'translate',
-  sideOpen: true,
+  sideOpen: typeof window === 'undefined' ? true : window.innerWidth >= 900,
   selection: null,
   pinnedSelection: null,
   job: null,

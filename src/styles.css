@@ -2465,3 +2465,195 @@ a {
   background: var(--bg-hover);
   color: var(--fg);
 }
+
+/* ---------- iPadOS / Tablet / PWA & Touch Adaptations ---------- */
+@supports (height: 100dvh) {
+  html,
+  body,
+  #root {
+    height: 100dvh;
+  }
+}
+
+.app-shell {
+  padding-left: env(safe-area-inset-left, 0px);
+  padding-right: env(safe-area-inset-right, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+.tabbar {
+  padding-top: env(safe-area-inset-top, 0px);
+  height: calc(38px + env(safe-area-inset-top, 0px));
+}
+
+.viewer,
+.doc-list,
+.lib-side-scroll,
+.tabbar-strip,
+.side-body,
+.detail-body,
+.settings-content,
+.notes-page {
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+}
+
+.sel-toolbar.below {
+  transform: translate(-50%, 0);
+}
+
+.col-status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+}
+
+.row-more-btn {
+  width: 24px;
+  height: 24px;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.doc-row:hover .row-more-btn,
+.doc-row:focus-within .row-more-btn {
+  opacity: 0.9;
+}
+
+.side-more-touch {
+  display: none;
+  border: 0;
+  background: transparent;
+  color: var(--fg-subtle);
+  padding: 2px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.drawer-toggle-btn {
+  display: none;
+}
+
+.drawer-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  z-index: 44;
+}
+
+/* Touch devices (iPadOS / iOS / Android tablets): comfortable tap targets & visible action buttons */
+@media (pointer: coarse) {
+  .tabbar {
+    height: calc(44px + env(safe-area-inset-top, 0px));
+  }
+  .wtab {
+    height: 36px;
+    padding: 0 12px;
+    font-size: 13px;
+  }
+  .wtab-close {
+    width: 24px;
+    height: 24px;
+    opacity: 0.7;
+  }
+  .toolbar {
+    min-height: 44px;
+    padding: 4px 10px;
+    gap: 4px;
+  }
+  .icon-btn {
+    min-width: 34px;
+    min-height: 34px;
+  }
+  .row-more-btn {
+    opacity: 0.85;
+    min-width: 30px;
+    min-height: 30px;
+  }
+  .side-more-touch {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 26px;
+    min-height: 26px;
+  }
+  .side-item {
+    min-height: 36px;
+    font-size: 14px;
+  }
+  .filter-pill {
+    height: 30px;
+    padding: 0 11px;
+    font-size: 12.5px;
+  }
+  .sel-toolbar {
+    padding: 6px;
+    gap: 4px;
+  }
+  .sel-toolbar .btn {
+    height: 34px;
+    padding: 0 10px;
+    font-size: 13.5px;
+  }
+  .sel-toolbar .swatch {
+    width: 22px;
+    height: 22px;
+  }
+  .ctx-item {
+    padding: 9px 12px;
+    font-size: 14px;
+  }
+  .doc-tr {
+    min-height: 42px;
+  }
+}
+
+/* iPad portrait & iPadOS Split View (<= 900px): slide-over sidebar drawer & overlay reader panel */
+@media (max-width: 900px) {
+  .drawer-toggle-btn {
+    display: inline-flex;
+  }
+  .lib-side {
+    display: none;
+  }
+  .lib-side.drawer-open {
+    display: flex;
+    position: fixed;
+    top: calc(38px + env(safe-area-inset-top, 0px));
+    bottom: 0;
+    left: 0;
+    width: min(290px, 84vw) !important;
+    z-index: 45;
+    box-shadow: var(--shadow);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  .lib-side.drawer-open .pane-resizer {
+    display: none;
+  }
+  .side {
+    position: fixed;
+    top: calc(84px + env(safe-area-inset-top, 0px));
+    right: 0;
+    bottom: 0;
+    width: min(420px, 92vw) !important;
+    max-width: 92vw;
+    z-index: 40;
+    box-shadow: var(--shadow);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  .side-resizer {
+    display: none;
+  }
+  .toolbar .doc-title {
+    max-width: 140px;
+  }
+}
+
+@media (pointer: coarse) and (max-width: 900px) {
+  .lib-side.drawer-open {
+    top: calc(44px + env(safe-area-inset-top, 0px));
+  }
+  .side {
+    top: calc(90px + env(safe-area-inset-top, 0px));
+  }
+}

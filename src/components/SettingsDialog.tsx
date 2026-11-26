@@ -1152,9 +1152,17 @@ function SyncSection({ onOpenSection }: { onOpenSection: (s: SettingsSection) =>
           <span className="hint">（使用账号密码在本地 AES-256-GCM 加密后上传，换设备登录即用）</span>
         </label>
 
-        <div className="hint" style={{ margin: '8px 0 16px', lineHeight: 1.6 }}>
-          同步内容包括：文献题录、PDF 原文（SHA-256 去重）、分类、标签、阅读进度、高亮笔记、术语表、AI 对话与翻译缓存。所有数据始终优先保存在本地，断网也可离线阅读。
+        <div className="hint" style={{ margin: '8px 0 12px', lineHeight: 1.6 }}>
+          同步内容包括：文献题录、PDF 原文（SHA-256 去重）、多级分类、彩色标签、阅读进度、高亮笔记、术语表、AI 对话与翻译缓存。网页版、Windows 桌面端与 iPadOS 平板登录同一账号即可实时互通。
           {!desktop() && proxyToken && '（已自动同步该服务器的中转代理地址与令牌，网页版配置 API 时无需手动填写代理。）'}
+        </div>
+
+        <div className="sync-card" style={{ marginBottom: 14, fontSize: 12.5, lineHeight: 1.6 }}>
+          <div style={{ fontWeight: 600, marginBottom: 2 }}>在 iPadOS 平板上使用（原生全屏 + 自动同步）</div>
+          <div className="hint">
+            1. 在 iPad Safari 打开 <code>{sync.serverUrl || '你的 PaperBridge 网址'}</code>，点击顶部「分享」→「添加到主屏幕」即可像原生 App 一样全屏阅读。<br />
+            2. 在 iPad 上打开「设置 → 云同步」登录同一个账号，即可与电脑实时同步全部文献、PDF、笔记、阅读进度与加密 API 配置。
+          </div>
         </div>
 
         <div className="row">
@@ -1178,9 +1186,9 @@ function SyncSection({ onOpenSection }: { onOpenSection: (s: SettingsSection) =>
 
   return (
     <>
-      <div style={{ fontWeight: 600, marginBottom: 4 }}>同一账号多端云同步</div>
+      <div style={{ fontWeight: 600, marginBottom: 4 }}>网页 · 电脑 · iPadOS 多端云同步</div>
       <div className="hint" style={{ marginBottom: 14, lineHeight: 1.6 }}>
-        在网页版、Windows 桌面客户端或其他电脑登录同一个账号，即可自动共享文献、PDF、笔记、术语、翻译缓存与加密后的 API 配置。
+        在网页版、Windows 桌面客户端和 iPadOS 平板（Safari 或「添加到主屏幕」）登录同一个账号，即可自动共享全部文献、PDF、多级分类、彩色标签、笔记、阅读进度与加密后的 API 配置。
       </div>
 
       <div className="field">

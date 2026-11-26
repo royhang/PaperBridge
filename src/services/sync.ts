@@ -73,7 +73,16 @@ function normalizeServerUrl(raw: string): string {
 function deviceLabel(): string {
   const d = desktop();
   if (d) return `Desktop (${d.platform} ${d.version})`;
-  if (typeof navigator !== 'undefined') return `Web (${navigator.platform || 'Browser'})`;
+  if (typeof navigator !== 'undefined') {
+    const ua = navigator.userAgent || '';
+    const isIpad = /iPad/i.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    const isStandalone =
+      typeof window !== 'undefined' &&
+      (window.matchMedia?.('(display-mode: standalone)').matches || (navigator as { standalone?: boolean }).standalone === true);
+    if (isIpad) return isStandalone ? 'iPadOS (App)' : 'iPadOS (Safari)';
+    if (/iPhone|iPod/i.test(ua)) return isStandalone ? 'iOS (App)' : 'iOS (Safari)';
+    return `Web (${navigator.platform || 'Browser'})`;
+  }
   return 'PaperBridge';
 }
 
@@ -439,7 +448,23 @@ export function initAutoSync() {
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'visible') {
         const s = useSync.getState();
-        if (s.token && s.autoSync && Date.now() - s.lastSyncAt > 30_000) void syncNow();
+        if (s.token && s.autoSync && Date.now() - s.lastSyncAt > 10_000) void syncNow();
+      } else if (document.visibilityState === 'hidden') {
+        // Flush pending local changes right before iPadOS Safari suspends the tab
+        if (debounceTimer) {
+          clearTimeout(debounceTimer);
+          debounceTimer = null;
+          const s = useSync.getState();
+          if (s.token && s.autoSync) void syncNow();
+        }
+      }
+    });
+    window.addEventListener('pagehide', () => {
+      if (debounceTimer) {
+        clearTimeout(debounceTimer);
+        debounceTimer = null;
+        const s = useSync.getState();
+        if (s.token && s.autoSync) void syncNow();
       }
     });
     setInterval(() => {

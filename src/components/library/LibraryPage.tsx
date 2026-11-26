@@ -86,6 +86,7 @@ export function LibraryPage() {
   const [hits, setHits] = useState<Map<string, TextHit[]> | null>(null);
   const [indexing, setIndexing] = useState<string>('');
   const [ctxMenu, setCtxMenu] = useState<{ doc: DocRecord; x: number; y: number } | null>(null);
+  const [drawerOpen, setDrawerOpen] = useState(false);
   const hasProvider = useSettings((s) => s.providers.length > 0);
   const openDocIds = useMemo(() => new Set(openTabs.map((t) => t.docId)), [openTabs]);
   const docsWithNotes = useMemo(() => new Set((notes ?? []).map((n) => n.docId)), [notes]);
@@ -245,11 +246,14 @@ export function LibraryPage() {
         </div>
       )}
       <div className="lib-body">
+        {drawerOpen && <div className="drawer-backdrop" onClick={() => setDrawerOpen(false)} />}
         <Sidebar
           activeDocs={activeDocs}
           trashedCount={trashedDocs.length}
           dupCount={dupGroupIndex.size}
           collections={collections ?? []}
+          drawerOpen={drawerOpen}
+          onCloseDrawer={() => setDrawerOpen(false)}
         />
         <main
           className={`lib-main${dropOver ? ' drop-over' : ''}`}
@@ -269,7 +273,14 @@ export function LibraryPage() {
         >
           {/* Zotero-style compact action & search toolbar */}
           <div className="lib-toolbar">
-            <button className="btn sm primary" onClick={() => setImportOpen(true)} title="导入 PDF / DOI / arXiv / BibTeX">
+            <button
+              className="icon-btn sm-ico drawer-toggle-btn"
+              title="打开分类与标签侧栏"
+              onClick={() => setDrawerOpen((v) => !v)}
+            >
+              <Icon name="folder" size={15} />
+            </button>
+            <button className="btn sm primary" onClick={() => setImportOpen(true)} title="导入 PDF / DOI / arXiv / BibTeX / 知网">
               <Icon name="plus" size={14} /> 导入
             </button>
             <MobileViewSelect activeDocs={activeDocs} collections={collections ?? []} trashedCount={trashedDocs.length} dupCount={dupGroupIndex.size} />
@@ -487,6 +498,7 @@ export function LibraryPage() {
                   e.preventDefault();
                   setCtxMenu({ doc: d, x: e.clientX, y: e.clientY });
                 }}
+                onOpenMenu={(x, y) => setCtxMenu({ doc: d, x, y })}
               />
             ))}
           </div>
@@ -561,6 +573,7 @@ function DocRow({
   dupGroup,
   hits,
   onContextMenu,
+  onOpenMenu,
 }: {
   d: DocRecord;
   stripe: boolean;
@@ -571,6 +584,7 @@ function DocRow({
   dupGroup?: number;
   hits?: TextHit[];
   onContextMenu: (e: React.MouseEvent) => void;
+  onOpenMenu: (x: number, y: number) => void;
 }) {
   const selected = useLibrary((s) => s.selectedId === d.id);
   const checked = useLibrary((s) => s.checked.includes(d.id));
@@ -674,6 +688,19 @@ function DocRow({
           <div className="col-year hide-sm">{d.meta.year ?? '—'}</div>
           <div className="col-status">
             <span className={`status-pill ${d.status}`}>{STATUS_LABEL[d.status]}</span>
+            <button
+              type="button"
+              className="icon-btn row-more-btn"
+              title="查看详情与更多操作"
+              aria-label="更多操作"
+              onClick={(e) => {
+                e.stopPropagation();
+                const r = e.currentTarget.getBoundingClientRect();
+                onOpenMenu(r.right - 208, r.bottom + 4);
+              }}
+            >
+              <Icon name="more" size={14} />
+            </button>
           </div>
         </div>
         {hits && hits.length > 0 && (
@@ -921,14 +948,22 @@ function Sidebar({
   trashedCount,
   dupCount,
   collections,
+  drawerOpen,
+  onCloseDrawer,
 }: {
   activeDocs: DocRecord[];
   trashedCount: number;
   dupCount: number;
   collections: Collection[];
+  drawerOpen: boolean;
+  onCloseDrawer: () => void;
 }) {
   const view = useLibrary((s) => s.view);
-  const setView = useLibrary((s) => s.setView);
+  const rawSetView = useLibrary((s) => s.setView);
+  const setView = (v: LibraryView) => {
+    rawSetView(v);
+    onCloseDrawer();
+  };
   const expandedCols = useLibrary((s) => s.expandedCols);
   const toggleColExpanded = useLibrary((s) => s.toggleColExpanded);
   const setColExpanded = useLibrary((s) => s.setColExpanded);
@@ -1106,7 +1141,7 @@ function Sidebar({
   );
 
   return (
-    <aside className="lib-side" style={{ width }}>
+    <aside className={`lib-side${drawerOpen ? ' drawer-open' : ''}`} style={{ width }}>
       <div className="lib-side-scroll">
         {/* Zotero primary root: 我的文库 + nested Collection Tree directly underneath */}
         <div
@@ -1207,6 +1242,18 @@ function Sidebar({
                     }}
                   >
                     <Icon name="plus" size={12} />
+                  </button>
+                  <button
+                    className="side-more-touch"
+                    title="分类操作"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      const r = e.currentTarget.getBoundingClientRect();
+                      setTagMenu(null);
+                      setColMenu({ col: c, x: r.left, y: r.bottom + 4 });
+                    }}
+                  >
+                    <Icon name="more" size={13} />
                   </button>
                 </div>
               )}
