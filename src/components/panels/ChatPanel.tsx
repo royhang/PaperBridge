@@ -49,9 +49,6 @@ export function ChatPanel() {
   useEffect(() => {
     if (!handoff) return;
     setInput((v) => `> ${handoff.text.replace(/\n/g, '\n> ')}\n\n${v}`);
-    // Default to excerpt-only mode when quoting a passage from the PDF so users save tokens & latency;
-    // they can still toggle "附带全文" on with 1 click if they want cross-paper context.
-    setIncludeFullText(false);
     consumeHandoff();
     setTimeout(() => inputRef.current?.focus(), 0);
   }, [handoff, consumeHandoff]);
