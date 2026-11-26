@@ -1,11 +1,13 @@
 import { memo, useEffect, useRef, useState } from 'react';
-import { db, uid, type InkPoint, type InkStroke } from '../db/db';
+import { db, uid, type InkPoint, type InkStroke, type InkTarget } from '../db/db';
 import { appendInkPoint, pointsToSvgPath, renderStrokeWidth, strokeHitsPoint } from '../lib/ink';
 import { useReader } from '../store/reader';
 
 interface InkLayerProps {
   docId: string;
   pageIndex: number;
+  layer?: InkTarget;
+  disabled?: boolean;
   width: number;
   height: number;
   scale: number;
@@ -14,7 +16,7 @@ interface InkLayerProps {
 
 type SafariTouch = Touch & { touchType?: 'direct' | 'stylus' };
 
-export const InkLayer = memo(function InkLayer({ docId, pageIndex, width, height, scale, strokes }: InkLayerProps) {
+export const InkLayer = memo(function InkLayer({ docId, pageIndex, layer = 'original', disabled = false, width, height, scale, strokes }: InkLayerProps) {
   const inkTool = useReader((s) => s.inkTool);
   const penColor = useReader((s) => s.penColor);
   const hlColor = useReader((s) => s.hlColor);
@@ -27,7 +29,7 @@ export const InkLayer = memo(function InkLayer({ docId, pageIndex, width, height
   const erasedRef = useRef<Set<string>>(new Set());
   const [draft, setDraft] = useState<InkPoint[] | null>(null);
 
-  const interactive = inkTool !== 'none';
+  const interactive = !disabled && inkTool !== 'none';
 
   // iPadOS Safari palm rejection:
   // Only preventDefault on touchstart/touchmove for Apple Pencil (`touchType === 'stylus'`) when
@@ -147,6 +149,7 @@ export const InkLayer = memo(function InkLayer({ docId, pageIndex, width, height
       id: uid(),
       docId,
       pageIndex,
+      layer,
       kind,
       color: kind === 'highlighter' ? hlColor : penColor,
       width: kind === 'highlighter' ? 16 : penWidth,

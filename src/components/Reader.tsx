@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { db, uid, type HighlightColor } from '../db/db';
+import { inkStrokeLayer } from '../lib/ink';
 import { openPdf, type PDFLoadingTask } from '../pdf/loader';
 import { invalidateTranslations, runFullText, stopFullText } from '../services/fulltext';
 import { useReader } from '../store/reader';
@@ -326,20 +327,29 @@ function InkToolbar({ docId }: { docId: string }) {
   const pencilOnly = useReader((s) => s.pencilOnly);
   const setPencilOnly = useReader((s) => s.setPencilOnly);
   const currentPage = useReader((s) => s.currentPage);
+  const viewMode = useReader((s) => s.viewMode);
 
   if (inkTool === 'none') return null;
 
-  const undoLast = async () => {
+  const pageInksForView = async () => {
     const rows = await db.inks.where('[docId+pageIndex]').equals([docId, currentPage]).sortBy('createdAt');
+    if (viewMode === 'original') return rows.filter((r) => inkStrokeLayer(r) === 'original');
+    if (viewMode === 'translated') return rows.filter((r) => inkStrokeLayer(r) === 'translated');
+    return rows;
+  };
+
+  const undoLast = async () => {
+    const rows = await pageInksForView();
     const last = rows[rows.length - 1];
     if (last) await db.inks.delete(last.id);
   };
 
   const clearPage = async () => {
-    const rows = await db.inks.where('[docId+pageIndex]').equals([docId, currentPage]).toArray();
+    const rows = await pageInksForView();
     if (!rows.length) return;
-    if (!confirm(`清空第 ${currentPage + 1} 页的全部 ${rows.length} 条手写笔迹？`)) return;
-    await db.inks.where('[docId+pageIndex]').equals([docId, currentPage]).delete();
+    const scope = viewMode === 'original' ? '原文' : viewMode === 'translated' ? '译文' : '（原文与译文）';
+    if (!confirm(`清空第 ${currentPage + 1} 页${scope}的全部 ${rows.length} 条手写笔迹？`)) return;
+    await db.inks.bulkDelete(rows.map((r) => r.id));
   };
 
   const palette = inkTool === 'highlighter' ? HL_COLORS : PEN_COLORS;

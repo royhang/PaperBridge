@@ -1,4 +1,15 @@
-import type { InkPoint, InkStroke } from '../db/db';
+import type { InkPoint, InkStroke, InkTarget } from '../db/db';
+
+/** Resolve which page layer an ink stroke belongs to (legacy strokes without `layer` belong to 'original'). */
+export function inkStrokeLayer(stroke: Pick<InkStroke, 'layer'>): InkTarget {
+  return stroke.layer === 'translated' ? 'translated' : 'original';
+}
+
+/** Filter a document's ink strokes to a specific page and layer ('original' or 'translated'). */
+export function filterPageInks(strokes: InkStroke[] | undefined, pageIndex: number, layer: InkTarget): InkStroke[] | undefined {
+  if (!strokes) return undefined;
+  return strokes.filter((s) => s.pageIndex === pageIndex && inkStrokeLayer(s) === layer);
+}
 
 /** Append a normalized point only if it moved enough to avoid micro-jitter and bloated storage. */
 export function appendInkPoint(points: InkPoint[], x: number, y: number, pressure: number, minDist = 0.0014): InkPoint[] {

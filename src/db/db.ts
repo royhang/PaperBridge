@@ -116,11 +116,14 @@ export interface ChatRecord {
 /** Normalized point [x (0..1), y (0..1), pressure (0..1)] for Apple Pencil / stylus ink. */
 export type InkPoint = [number, number, number];
 export type InkKind = 'pen' | 'highlighter';
+export type InkTarget = 'original' | 'translated';
 
 export interface InkStroke {
   id: string;
   docId: string;
   pageIndex: number;
+  /** Which page canvas the stroke belongs to (omitted = 'original' for backwards compatibility). */
+  layer?: InkTarget;
   kind: InkKind;
   color: string;
   /** Stroke width in PDF page points at scale = 1 (scales cleanly with zoom). */

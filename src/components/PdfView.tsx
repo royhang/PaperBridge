@@ -7,6 +7,7 @@ import type { Paragraph } from '../pdf/types';
 import { useReader } from '../store/reader';
 import { useSettings } from '../store/settings';
 import { cleanSelectedText } from '../lib/text';
+import { filterPageInks } from '../lib/ink';
 import { InkLayer } from './InkLayer';
 
 interface Size {
@@ -293,10 +294,20 @@ export function PdfView() {
                 docId={docId}
                 container={containerRef}
                 notes={notes?.filter((n) => n.pageIndex === i)}
-                inks={inks?.filter((s) => s.pageIndex === i)}
+                inks={filterPageInks(inks, i, 'original')}
               />
             )}
-            {viewMode !== 'original' && <TransPageView index={i} size={sz} scale={scale} pdf={pdf} container={containerRef} />}
+            {viewMode !== 'original' && (
+              <TransPageView
+                index={i}
+                size={sz}
+                scale={scale}
+                pdf={pdf}
+                docId={docId}
+                container={containerRef}
+                inks={filterPageInks(inks, i, 'translated')}
+              />
+            )}
           </div>
         ))}
       </div>
@@ -451,7 +462,7 @@ const PageView = memo(function PageView({ index, size, scale, pdf, docId, contai
       )}
       <PinnedSelectionLayer index={index} />
       <div ref={textRef} />
-      <InkLayer docId={docId} pageIndex={index} width={w} height={h} scale={scale} strokes={inks} />
+      <InkLayer docId={docId} pageIndex={index} layer="original" width={w} height={h} scale={scale} strokes={inks} />
       {visible && <ParagraphLayer pdf={pdf} docId={docId} index={index} scale={scale} />}
     </div>
   );
@@ -551,13 +562,17 @@ const TransPageView = memo(function TransPageView({
   size,
   scale,
   pdf,
+  docId,
   container,
+  inks,
 }: {
   index: number;
   size: Size;
   scale: number;
   pdf: PDFDocumentProxy;
+  docId: string;
   container: React.RefObject<HTMLDivElement | null>;
+  inks?: InkStroke[];
 }) {
   const holderRef = useRef<HTMLDivElement>(null);
   const canvasHolder = useRef<HTMLDivElement>(null);
@@ -647,6 +662,7 @@ const TransPageView = memo(function TransPageView({
     >
       <div ref={canvasHolder} />
       <div ref={textRef} />
+      <InkLayer docId={docId} pageIndex={index} layer="translated" disabled={!bytes && !showOriginal} width={w} height={h} scale={scale} strokes={inks} />
       {(bytes || showOriginal) && !rendered && <div className="page-loading">{index + 1}</div>}
       {!bytes && !showOriginal && (
         <div className="trans-status">

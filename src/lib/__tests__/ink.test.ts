@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { InkStroke } from '../../db/db';
-import { appendInkPoint, pointsToSvgPath, renderStrokeWidth, strokeHitsPoint } from '../ink';
+import { appendInkPoint, filterPageInks, inkStrokeLayer, pointsToSvgPath, renderStrokeWidth, strokeHitsPoint } from '../ink';
 
 describe('Apple Pencil / freehand ink helpers', () => {
   it('decimates micro-jitter points and clamps coordinates/pressure', () => {
@@ -49,5 +49,19 @@ describe('Apple Pencil / freehand ink helpers', () => {
     };
     expect(strokeHitsPoint(stroke, 0.5, 0.51)).toBe(true);
     expect(strokeHitsPoint(stroke, 0.5, 0.7)).toBe(false);
+  });
+
+  it('separates original and translated page ink layers with backwards compatibility', () => {
+    const base = { docId: 'd1', pageIndex: 2, kind: 'pen' as const, color: '#e11d48', width: 2, points: [[0.5, 0.5, 0.5] as [number, number, number]], createdAt: 1 };
+    const strokes: InkStroke[] = [
+      { ...base, id: 'legacy' },
+      { ...base, id: 'orig', layer: 'original' },
+      { ...base, id: 'trans', layer: 'translated' },
+      { ...base, id: 'other-page', pageIndex: 3, layer: 'translated' },
+    ];
+    expect(inkStrokeLayer(strokes[0])).toBe('original');
+    expect(inkStrokeLayer(strokes[2])).toBe('translated');
+    expect(filterPageInks(strokes, 2, 'original')?.map((s) => s.id)).toEqual(['legacy', 'orig']);
+    expect(filterPageInks(strokes, 2, 'translated')?.map((s) => s.id)).toEqual(['trans']);
   });
 });
