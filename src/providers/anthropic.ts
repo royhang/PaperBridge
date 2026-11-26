@@ -17,13 +17,22 @@ export function createAnthropicProvider(cfg: ProviderConfig, ctx: ProviderContex
       });
       new Headers(cfg.extraHeaders).forEach((value, name) => headers.set(name, value));
 
+      const systemText = system.length ? system.join('\n\n') : '';
+      // Enable explicit Prompt Caching on long static system prompts (e.g. full paper Q&A >= 4000 chars)
+      // to unlock Anthropic's 90% cache-hit discount while keeping short prompts as plain strings.
+      const systemPayload = !systemText
+        ? undefined
+        : systemText.length >= 4000
+          ? [{ type: 'text', text: systemText, cache_control: { type: 'ephemeral' } }]
+          : systemText;
+
       const res = await ctx.fetch(`${base}/v1/messages`, {
         method: 'POST',
         headers,
         body: JSON.stringify({
           model: cfg.model ?? 'claude-sonnet-5-5',
           messages: messages.filter(({ role }) => role !== 'system'),
-          system: system.length ? system.join('\n\n') : undefined,
+          system: systemPayload,
           temperature: temperature ?? cfg.temperature,
           max_tokens: maxTokens ?? 4096,
           stream: true,

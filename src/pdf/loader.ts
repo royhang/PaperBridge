@@ -93,6 +93,20 @@ export function getPageParagraphs(pdf: PDFDocumentProxy, docId: string, pageInde
   return p;
 }
 
+/** Extracted plain text per 1-indexed page (cached via getPageParagraphs in IndexedDB). */
+export async function getDocumentPages(pdf: PDFDocumentProxy, docId: string): Promise<{ page: number; text: string }[]> {
+  const pages: { page: number; text: string }[] = [];
+  for (let i = 0; i < pdf.numPages; i++) {
+    const paras = await getPageParagraphs(pdf, docId, i);
+    const text = paras
+      .filter((p) => p.kind !== 'other')
+      .map((p) => p.text)
+      .join('\n');
+    pages.push({ page: i + 1, text });
+  }
+  return pages;
+}
+
 /** Plain text of the whole document (for Q&A context), with page markers. */
 export async function getDocumentText(pdf: PDFDocumentProxy, docId: string, maxChars = 120_000): Promise<string> {
   const parts: string[] = [];

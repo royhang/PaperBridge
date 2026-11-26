@@ -2,7 +2,8 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { useEffect, useRef, useState } from 'react';
 import { db, uid, type ChatRecord } from '../../db/db';
 import { openSettings } from '../../lib/nav';
-import { getDocumentText } from '../../pdf/loader';
+import { buildPaperContext, type PageText } from '../../lib/bm25';
+import { getDocumentPages } from '../../pdf/loader';
 import type { ChatMessage } from '../../providers/types';
 import { describeError, fillTemplate, getChatLLM, langLabel } from '../../services/translate';
 import { useReader } from '../../store/reader';
@@ -35,13 +36,13 @@ export function ChatPanel() {
   const [input, setInput] = useState('');
   const [streaming, setStreaming] = useState<string | null>(null);
   const [error, setError] = useState('');
-  /** Whether to attach the full paper text as system context (can be turned off for quoted excerpts to save tokens). */
+  /** Whether to attach paper context (full text for normal papers, auto BM25 retrieval for 100+ page PDFs). */
   const [includeFullText, setIncludeFullText] = useState(true);
-  const [docChars, setDocChars] = useState<number | null>(null);
+  const [contextMeta, setContextMeta] = useState<{ mode: 'full' | 'bm25'; usedChars: number; selected: number; total: number } | null>(null);
   const ctrlRef = useRef<AbortController | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
-  const docTextRef = useRef<{ docId: string; text: string } | null>(null);
+  const docPagesRef = useRef<{ docId: string; pages: PageText[] } | null>(null);
 
   const chat: ChatRecord | undefined = chats?.find((c) => c.id === chatId) ?? (chatId === null ? chats?.[0] : undefined);
   const messages = chat?.messages ?? [];
@@ -92,12 +93,22 @@ export function ChatPanel() {
       setChatId(id);
       let paperContext = '';
       if (useFull) {
-        if (docTextRef.current?.docId !== docId) {
-          const extracted = await getDocumentText(pdf, docId, CONTEXT_CHARS);
-          docTextRef.current = { docId, text: extracted };
-          setDocChars(extracted.length);
+        if (docPagesRef.current?.docId !== docId) {
+          const pages = await getDocumentPages(pdf, docId);
+          docPagesRef.current = { docId, pages };
         }
-        paperContext = `\n\n<paper>\n${docTextRef.current.text}\n</paper>`;
+        const recentQuery = history
+          .filter((m) => m.role === 'user')
+          .slice(-2)
+          .map((m) => m.content)
+          .join('\n');
+        const built = buildPaperContext(docPagesRef.current.pages, {
+          query: recentQuery,
+          currentPage: useReader.getState().currentPage + 1,
+          fullLimit: CONTEXT_CHARS,
+        });
+        setContextMeta({ mode: built.mode, usedChars: built.usedChars, selected: built.selectedPages.length, total: built.totalPages });
+        paperContext = `\n\n<paper>\n${built.context}\n</paper>`;
       }
       ctrl.signal.throwIfAborted();
       const system = fillTemplate(s.prompts.chatSystem, { to: langLabel(s.targetLang), title }) + paperContext;
@@ -210,9 +221,11 @@ export function ChatPanel() {
           >
             {includeFullText ? '✓ 附带全文上下文' : '仅当前引用（省 Token）'}
           </button>
-          {includeFullText && docChars !== null && (
+          {includeFullText && contextMeta && (
             <span className="hint" style={{ fontSize: 11 }}>
-              约 {Math.max(1, Math.round(docChars / 4000))}k tokens
+              {contextMeta.mode === 'bm25'
+                ? `超长文档 · BM25 检索 ${contextMeta.selected}/${contextMeta.total} 页（约 ${Math.max(1, Math.round(contextMeta.usedChars / 4000))}k tokens）`
+                : `全文约 ${Math.max(1, Math.round(contextMeta.usedChars / 4000))}k tokens`}
             </span>
           )}
         </div>

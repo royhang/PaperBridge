@@ -113,6 +113,18 @@ describe('LLM adapters', () => {
     });
   });
 
+  it('attaches Anthropic ephemeral cache_control on long system prompts (>= 4000 chars)', async () => {
+    const { provider, fetch, signal } = mockedProvider('anthropic', { model: 'claude-test' });
+    if (provider.type !== 'llm') throw new Error('Expected LLM provider');
+    fetch.mockResolvedValueOnce(response(event({ type: 'message_stop' }, 'message_stop')));
+    const longPaper = 'x'.repeat(4500);
+    await expect(
+      collect(provider.chat({ messages: [{ role: 'system', content: longPaper }, { role: 'user', content: 'Summarize' }], signal })),
+    ).resolves.toEqual([]);
+    const parsed = JSON.parse(String(fetch.mock.calls[0][1]?.body));
+    expect(parsed.system).toEqual([{ type: 'text', text: longPaper, cache_control: { type: 'ephemeral' } }]);
+  });
+
   it('throws ProviderError for Anthropic error events', async () => {
     const { provider, fetch, signal } = mockedProvider('anthropic');
     if (provider.type !== 'llm') throw new Error('Expected LLM provider');
