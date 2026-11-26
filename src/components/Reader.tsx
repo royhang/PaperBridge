@@ -3,6 +3,7 @@ import { db, uid, type HighlightColor } from '../db/db';
 import { inkStrokeLayer } from '../lib/ink';
 import { openPdf, type PDFLoadingTask } from '../pdf/loader';
 import { invalidateTranslations, runFullText, stopFullText } from '../services/fulltext';
+import { ensurePdfBlobDownloaded } from '../services/sync';
 import { useReader } from '../store/reader';
 import { useSettings } from '../store/settings';
 import { getReaderSnapshot, getWarmPdf, saveReaderSnapshot, setWarmPdf, useTabs } from '../store/tabs';
@@ -36,7 +37,12 @@ export function Reader({ docId, active = true }: { docId: string; active?: boole
       if (!doc) throw new Error('文献不存在或已被删除');
       let loaded = getWarmPdf(docId)?.pdf;
       if (!loaded) {
-        const blob = await db.blobs.get(docId);
+        let blob = await db.blobs.get(docId);
+        if (!blob && doc.hasPdf && doc.hash) {
+          await ensurePdfBlobDownloaded(docId);
+          if (cancelled) return;
+          blob = await db.blobs.get(docId);
+        }
         if (!blob) throw new Error('这个条目还没有 PDF。请回到「我的文库」，在右侧详情面板中「获取 PDF」或「附加 PDF」。');
         const bytes = await blob.blob.arrayBuffer();
         if (cancelled) return;
@@ -113,11 +119,11 @@ export function Reader({ docId, active = true }: { docId: string; active?: boole
     [],
   );
 
-  // persist reading position
+  // persist reading position (debounced so fast scrolling doesn't trigger extra syncs)
   const currentPage = useReader((s) => s.currentPage);
   useEffect(() => {
     if (!pdf) return;
-    const t = setTimeout(() => void db.docs.update(docId, { lastPage: currentPage }), 600);
+    const t = setTimeout(() => void db.docs.update(docId, { lastPage: currentPage }), 2000);
     return () => clearTimeout(t);
   }, [currentPage, pdf, docId]);
 

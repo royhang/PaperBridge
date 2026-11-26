@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
+import { gzipSync } from 'node:zlib';
 import { createSyncServer } from './server.mjs';
 
 async function start(env = {}) {
@@ -154,6 +155,64 @@ test('auth register/login, LWW + tombstone merge, encrypted settings, and per-us
     ).json();
     assert.equal(connCols.username, 'alice');
     assert.ok(Array.isArray(connCols.collections));
+
+    // Incremental delta sync & gzip upload/download
+    const fullSnap = await (
+      await fetch(`${srv.base}/api/sync/merge`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${regA.token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ docs: {}, deleted: {} }),
+      })
+    ).json();
+    const baseRev = fullSnap.revision;
+    assert.equal(fullSnap.mode, 'full');
+
+    // Unchanged delta poll returns tiny unchanged response without bumping revision
+    const idlePoll = await (
+      await fetch(`${srv.base}/api/sync/merge`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${regA.token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ baseRevision: baseRev, delta: true, docs: {}, deleted: {} }),
+      })
+    ).json();
+    assert.equal(idlePoll.mode, 'unchanged');
+    assert.equal(idlePoll.revision, baseRev);
+    assert.equal(idlePoll.state, undefined);
+
+    // Device 2 pushes ONE gzip-compressed ink stroke via delta; Device 1 pulls ONLY that stroke (not existing docs/translations)
+    const gzipPayload = gzipSync(
+      Buffer.from(
+        JSON.stringify({
+          baseRevision: baseRev,
+          delta: true,
+          inks: { ink1: { id: 'ink1', docId: 'd1', pageIndex: 0, layer: 'translated', kind: 'pen', color: '#e11d48', width: 2, points: [[0.1, 0.2, 0.5]], createdAt: 500 } },
+          deleted: {},
+        }),
+      ),
+    );
+    const d2Push = await (
+      await fetch(`${srv.base}/api/sync/merge`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${loginA2.token}`, 'Content-Type': 'application/json', 'Content-Encoding': 'gzip' },
+        body: gzipPayload,
+      })
+    ).json();
+    assert.equal(d2Push.mode, 'delta');
+    assert.equal(d2Push.revision, baseRev + 1);
+    assert.ok(d2Push.state.inks.ink1);
+    assert.equal(Object.keys(d2Push.state.docs).length, 0);
+
+    const d1Pull = await (
+      await fetch(`${srv.base}/api/sync/merge`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${regA.token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ baseRevision: baseRev, delta: true, docs: {}, deleted: {} }),
+      })
+    ).json();
+    assert.equal(d1Pull.mode, 'delta');
+    assert.equal(d1Pull.revision, baseRev + 1);
+    assert.equal(d1Pull.state.inks.ink1.layer, 'translated');
+    assert.equal(Object.keys(d1Pull.state.docs).length, 0);
   } finally {
     await srv.close();
   }

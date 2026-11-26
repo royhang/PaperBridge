@@ -1,7 +1,7 @@
 import { db, type ChatRecord, type Collection, type DocRecord, type GlossaryEntry, type InkStroke, type NoteRecord, type TranslationRecord } from '../db/db';
 import { desktop } from '../lib/desktop';
 import { useSettings, type Settings } from '../store/settings';
-import { emptyTombstones, useSync, type TombstoneMap, type TombstoneTable } from '../store/sync';
+import { emptyDirty, emptyTombstones, useSync, type DirtyMap, type SyncTable, type TombstoneMap, type TombstoneTable } from '../store/sync';
 
 const SYNCED_SETTING_KEYS = [
   'providers',
@@ -86,13 +86,52 @@ function deviceLabel(): string {
   return 'PaperBridge';
 }
 
-async function apiJson<T>(serverUrl: string, path: string, init: RequestInit = {}, token?: string): Promise<T> {
+async function maybeGzipJson(jsonText: string): Promise<{ body: BodyInit; gzipped: boolean }> {
+  if (jsonText.length < 8192 || typeof CompressionStream !== 'function') {
+    return { body: jsonText, gzipped: false };
+  }
+  try {
+    const stream = new Blob([jsonText]).stream().pipeThrough(new CompressionStream('gzip'));
+    const buf = await new Response(stream).arrayBuffer();
+    if (buf.byteLength < jsonText.length) {
+      return { body: buf, gzipped: true };
+    }
+  } catch {
+    /* fallback to plain JSON */
+  }
+  return { body: jsonText, gzipped: false };
+}
+
+async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } catch (e) {
+    if ((e as Error)?.name === 'AbortError') {
+      throw new Error('网络请求超时，请检查网络连接后重试');
+    }
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function apiJson<T>(serverUrl: string, path: string, init: RequestInit = {}, token?: string, timeoutMs = 25_000): Promise<T> {
   const base = normalizeServerUrl(serverUrl);
   if (!base) throw new Error('请先填写同步服务器地址');
   const headers = new Headers(init.headers);
   if (token) headers.set('Authorization', `Bearer ${token}`);
-  if (init.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
-  const res = await fetch(`${base}${path}`, { ...init, headers });
+  let body = init.body;
+  if (typeof body === 'string') {
+    if (!headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
+    const compressed = await maybeGzipJson(body);
+    body = compressed.body;
+    if (compressed.gzipped) headers.set('Content-Encoding', 'gzip');
+  } else if (body && !headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json');
+  }
+  const res = await fetchWithTimeout(`${base}${path}`, { ...init, body, headers }, timeoutMs);
   const text = await res.text();
   let json: Record<string, unknown> = {};
   try {
@@ -170,9 +209,10 @@ interface RemoteState {
 }
 
 interface MergeResponse {
+  mode?: 'unchanged' | 'delta' | 'full';
   revision: number;
   updatedAt: number;
-  state: RemoteState;
+  state?: RemoteState;
   missingBlobs: string[];
   proxy?: { token?: string };
 }
@@ -181,6 +221,35 @@ function indexBy<T>(arr: T[], keyOf: (x: T) => string): Record<string, T> {
   const out: Record<string, T> = {};
   for (const x of arr) out[keyOf(x)] = x;
   return out;
+}
+
+function cloneDirty(d: DirtyMap): DirtyMap {
+  return {
+    docs: [...(d.docs ?? [])],
+    collections: [...(d.collections ?? [])],
+    notes: [...(d.notes ?? [])],
+    inks: [...(d.inks ?? [])],
+    glossary: [...(d.glossary ?? [])],
+    chats: [...(d.chats ?? [])],
+    translations: [...(d.translations ?? [])],
+  };
+}
+
+function cloneTombstones(t: TombstoneMap): TombstoneMap {
+  return {
+    docs: { ...(t.docs ?? {}) },
+    collections: { ...(t.collections ?? {}) },
+    notes: { ...(t.notes ?? {}) },
+    inks: { ...(t.inks ?? {}) },
+    glossary: { ...(t.glossary ?? {}) },
+    chats: { ...(t.chats ?? {}) },
+  };
+}
+
+async function loadDeltaRecords<T>(ids: string[], loader: (keys: string[]) => Promise<(T | undefined)[]>): Promise<T[]> {
+  if (!ids.length) return [];
+  const rows = await loader(ids);
+  return rows.filter((r): r is T => r !== undefined);
 }
 
 function pickSyncedSettings(s: Settings): SyncedSettings {
@@ -204,8 +273,111 @@ function pickSyncedSettings(s: Settings): SyncedSettings {
 let inFlight: Promise<boolean> | null = null;
 let rerunQueued = false;
 let suppressHooks = false;
+let blobInFlight: Promise<void> | null = null;
+const pendingMissingUploads = new Set<string>();
+const inflightDownloads = new Map<string, Promise<boolean>>();
 
-export async function syncNow(): Promise<boolean> {
+/** Download a single PDF blob on-demand (e.g. when user opens a synced paper before background blob sync reaches it). */
+export async function ensurePdfBlobDownloaded(docId: string): Promise<boolean> {
+  const existing = await db.blobs.get(docId);
+  if (existing) return true;
+  const doc = await db.docs.get(docId);
+  const st = useSync.getState();
+  if (!doc?.hasPdf || !doc.hash || !st.serverUrl || !st.token) return false;
+  const inflight = inflightDownloads.get(docId);
+  if (inflight) return inflight;
+
+  const task = (async () => {
+    try {
+      const dlRes = await fetchWithTimeout(
+        `${normalizeServerUrl(st.serverUrl)}/api/blobs/${doc.hash}`,
+        { headers: { Authorization: `Bearer ${st.token}` } },
+        120_000,
+      );
+      if (!dlRes.ok) return false;
+      const buf = await dlRes.arrayBuffer();
+      suppressHooks = true;
+      try {
+        await db.blobs.put({ id: doc.id, blob: new Blob([buf], { type: 'application/pdf' }) });
+      } finally {
+        suppressHooks = false;
+      }
+      return true;
+    } catch (e) {
+      console.warn('on-demand PDF download failed', docId, e);
+      return false;
+    } finally {
+      inflightDownloads.delete(docId);
+    }
+  })();
+  inflightDownloads.set(docId, task);
+  return task;
+}
+
+/** Upload/download missing PDF blobs in the background so large files never block fast metadata/ink sync. */
+function syncBlobsInBackground(missingUploads: string[]) {
+  for (const h of missingUploads) pendingMissingUploads.add(h);
+  if (blobInFlight) return;
+  const st0 = useSync.getState();
+  if (!st0.serverUrl || !st0.token) return;
+
+  blobInFlight = (async () => {
+    try {
+      const serverBase = normalizeServerUrl(useSync.getState().serverUrl);
+      const token = useSync.getState().token;
+      if (!serverBase || !token) return;
+
+      const localDocs = await db.docs.toArray();
+      const docByHash = new Map<string, DocRecord>();
+      for (const d of localDocs) if (d.hasPdf && d.hash) docByHash.set(d.hash, d);
+
+      // 1. Upload missing blobs to server
+      const uploads = [...pendingMissingUploads];
+      pendingMissingUploads.clear();
+      for (let i = 0; i < uploads.length; i++) {
+        if (!useSync.getState().token) return;
+        const h = uploads[i];
+        const d = docByHash.get(h);
+        if (!d) continue;
+        const b = await db.blobs.get(d.id);
+        if (!b) continue;
+        useSync.getState().set({ blobProgress: `后台上传 PDF (${i + 1}/${uploads.length})…` });
+        try {
+          const upRes = await fetchWithTimeout(
+            `${serverBase}/api/blobs/${h}`,
+            { method: 'PUT', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/pdf' }, body: b.blob },
+            120_000,
+          );
+          if (!upRes.ok) console.warn('blob upload failed', h, upRes.status);
+        } catch (e) {
+          console.warn('blob upload error', h, e);
+        }
+      }
+
+      // 2. Download missing local PDFs
+      const missingLocal: DocRecord[] = [];
+      for (const d of localDocs) {
+        if (!d.hasPdf || !d.hash || d.deletedAt) continue;
+        const exists = await db.blobs.get(d.id);
+        if (!exists) missingLocal.push(d);
+      }
+      for (let i = 0; i < missingLocal.length; i++) {
+        if (!useSync.getState().token) return;
+        const d = missingLocal[i];
+        useSync.getState().set({ blobProgress: `后台下载 PDF (${i + 1}/${missingLocal.length})…` });
+        await ensurePdfBlobDownloaded(d.id);
+      }
+    } finally {
+      useSync.getState().set({ blobProgress: '' });
+      blobInFlight = null;
+      if (pendingMissingUploads.size > 0 && useSync.getState().token) {
+        syncBlobsInBackground([]);
+      }
+    }
+  })();
+}
+
+export async function syncNow(opts?: { full?: boolean }): Promise<boolean> {
   const st = useSync.getState();
   if (!st.serverUrl || !st.token) return false;
   if (inFlight) {
@@ -215,22 +387,36 @@ export async function syncNow(): Promise<boolean> {
 
   inFlight = (async () => {
     const sync = useSync.getState();
-    sync.set({ status: 'syncing', progress: '合并数据…', lastError: '' });
+    const useDelta = !opts?.full && sync.lastRevision > 0;
+    const dirtySnap = cloneDirty(sync.dirty);
+    const delSnap = cloneTombstones(useDelta ? sync.dirtyTombstones : sync.tombstones);
+    const settingsDirtySnap = sync.dirtySettings;
+
+    sync.set({ status: 'syncing', progress: useDelta ? '增量同步…' : '同步数据…', lastError: '' });
     try {
-      const [docs, collections, notes, inks, glossary, chats, translations] = await Promise.all([
-        db.docs.toArray(),
-        db.collections.toArray(),
-        db.notes.toArray(),
-        db.inks.toArray(),
-        db.glossary.toArray(),
-        db.chats.toArray(),
-        db.translations.toArray(),
-      ]);
+      const [docs, collections, notes, inks, glossary, chats, translations] = useDelta
+        ? await Promise.all([
+            loadDeltaRecords(dirtySnap.docs, (k) => db.docs.bulkGet(k)),
+            loadDeltaRecords(dirtySnap.collections, (k) => db.collections.bulkGet(k)),
+            loadDeltaRecords(dirtySnap.notes, (k) => db.notes.bulkGet(k)),
+            loadDeltaRecords(dirtySnap.inks, (k) => db.inks.bulkGet(k)),
+            loadDeltaRecords(dirtySnap.glossary, (k) => db.glossary.bulkGet(k)),
+            loadDeltaRecords(dirtySnap.chats, (k) => db.chats.bulkGet(k)),
+            loadDeltaRecords(dirtySnap.translations, (k) => db.translations.bulkGet(k)),
+          ])
+        : await Promise.all([
+            db.docs.toArray(),
+            db.collections.toArray(),
+            db.notes.toArray(),
+            db.inks.toArray(),
+            db.glossary.toArray(),
+            db.chats.toArray(),
+            db.translations.toArray(),
+          ]);
 
       let settingsPayload: { updatedAt: number; encrypted: string } | undefined;
-      if (sync.syncSettings && sync.encKeyB64) {
+      if (sync.syncSettings && sync.encKeyB64 && (!useDelta || settingsDirtySnap)) {
         const curSettings = useSettings.getState();
-        // Only upload local settings if user has configured something or previously modified them
         const updatedAt = sync.settingsUpdatedAt || (curSettings.providers.length > 0 ? 1 : 0);
         if (updatedAt > 0) {
           settingsPayload = {
@@ -246,6 +432,7 @@ export async function syncNow(): Promise<boolean> {
         {
           method: 'POST',
           body: JSON.stringify({
+            ...(useDelta ? { baseRevision: sync.lastRevision, delta: true } : {}),
             docs: indexBy(docs, (d) => d.id),
             collections: indexBy(collections, (c) => c.id),
             notes: indexBy(notes, (n) => n.id),
@@ -254,34 +441,23 @@ export async function syncNow(): Promise<boolean> {
             chats: indexBy(chats, (c) => c.id),
             translations: indexBy(translations, (t) => t.key),
             settings: settingsPayload,
-            deleted: sync.tombstones,
+            deleted: delSnap,
           }),
         },
         sync.token,
+        useDelta ? 20_000 : 45_000,
       );
 
-      // Apply merged records back into local IndexedDB without triggering local change hooks
+      // Clear only the dirty keys we actually sent (preserving edits made while in-flight)
+      useSync.getState().clearDirty(dirtySnap, delSnap, !!settingsPayload);
       applyProxyHint(normalizeServerUrl(sync.serverUrl), res.proxy);
-      suppressHooks = true;
-      try {
-        const remote = res.state;
-        const del = { ...emptyTombstones(), ...(remote.deleted ?? {}) };
 
-        await db.transaction('rw', [db.docs, db.blobs, db.collections, db.notes, db.inks, db.glossary, db.chats, db.translations], async () => {
-          // Delete locally removed/tombstoned items
-          for (const id of Object.keys(del.docs ?? {})) {
-            if (!remote.docs[id]) {
-              await db.docs.delete(id);
-              await db.blobs.delete(id);
-            }
-          }
-          for (const id of Object.keys(del.collections ?? {})) if (!remote.collections[id]) await db.collections.delete(id);
-          for (const id of Object.keys(del.notes ?? {})) if (!remote.notes[id]) await db.notes.delete(id);
-          for (const id of Object.keys(del.inks ?? {})) if (!remote.inks?.[id]) await db.inks.delete(id);
-          for (const id of Object.keys(del.glossary ?? {})) if (!remote.glossary[id]) await db.glossary.delete(id);
-          for (const id of Object.keys(del.chats ?? {})) if (!remote.chats[id]) await db.chats.delete(id);
-
-          // Upsert merged records
+      const remote = res.state;
+      if (res.mode !== 'unchanged' && remote) {
+        // Apply merged records back into local IndexedDB without triggering local change hooks
+        suppressHooks = true;
+        try {
+          const del = { ...emptyTombstones(), ...(remote.deleted ?? {}) };
           const rDocs = Object.values(remote.docs ?? {});
           const rCols = Object.values(remote.collections ?? {});
           const rNotes = Object.values(remote.notes ?? {});
@@ -289,77 +465,59 @@ export async function syncNow(): Promise<boolean> {
           const rGlos = Object.values(remote.glossary ?? {});
           const rChats = Object.values(remote.chats ?? {});
           const rTrans = Object.values(remote.translations ?? {});
+          const hasDeletes =
+            Object.keys(del.docs).length > 0 ||
+            Object.keys(del.collections).length > 0 ||
+            Object.keys(del.notes).length > 0 ||
+            Object.keys(del.inks).length > 0 ||
+            Object.keys(del.glossary).length > 0 ||
+            Object.keys(del.chats).length > 0;
+          const hasPuts = rDocs.length + rCols.length + rNotes.length + rInks.length + rGlos.length + rChats.length + rTrans.length > 0;
 
-          if (rDocs.length) await db.docs.bulkPut(rDocs);
-          if (rCols.length) await db.collections.bulkPut(rCols);
-          if (rNotes.length) await db.notes.bulkPut(rNotes);
-          if (rInks.length) await db.inks.bulkPut(rInks);
-          if (rGlos.length) await db.glossary.bulkPut(rGlos);
-          if (rChats.length) await db.chats.bulkPut(rChats);
-          if (rTrans.length) await db.translations.bulkPut(rTrans);
-        });
+          if (hasDeletes || hasPuts) {
+            await db.transaction('rw', [db.docs, db.blobs, db.collections, db.notes, db.inks, db.glossary, db.chats, db.translations], async () => {
+              for (const id of Object.keys(del.docs ?? {})) {
+                if (!remote.docs?.[id]) {
+                  await db.docs.delete(id);
+                  await db.blobs.delete(id);
+                }
+              }
+              for (const id of Object.keys(del.collections ?? {})) if (!remote.collections?.[id]) await db.collections.delete(id);
+              for (const id of Object.keys(del.notes ?? {})) if (!remote.notes?.[id]) await db.notes.delete(id);
+              for (const id of Object.keys(del.inks ?? {})) if (!remote.inks?.[id]) await db.inks.delete(id);
+              for (const id of Object.keys(del.glossary ?? {})) if (!remote.glossary?.[id]) await db.glossary.delete(id);
+              for (const id of Object.keys(del.chats ?? {})) if (!remote.chats?.[id]) await db.chats.delete(id);
 
-        // Apply E2E-decrypted remote settings if newer
-        if (sync.syncSettings && sync.encKeyB64 && remote.settings?.encrypted) {
-          const localTs = useSync.getState().settingsUpdatedAt;
-          if (remote.settings.updatedAt > localTs) {
-            const dec = await decryptPayload<Partial<SyncedSettings>>(remote.settings.encrypted, sync.encKeyB64);
-            if (dec && Array.isArray(dec.providers)) {
-              useSettings.getState().set(dec);
-              useSync.getState().set({ settingsUpdatedAt: remote.settings.updatedAt });
+              if (rDocs.length) await db.docs.bulkPut(rDocs);
+              if (rCols.length) await db.collections.bulkPut(rCols);
+              if (rNotes.length) await db.notes.bulkPut(rNotes);
+              if (rInks.length) await db.inks.bulkPut(rInks);
+              if (rGlos.length) await db.glossary.bulkPut(rGlos);
+              if (rChats.length) await db.chats.bulkPut(rChats);
+              if (rTrans.length) await db.translations.bulkPut(rTrans);
+            });
+          }
+
+          // Apply E2E-decrypted remote settings if newer
+          if (sync.syncSettings && sync.encKeyB64 && remote.settings?.encrypted) {
+            const localTs = useSync.getState().settingsUpdatedAt;
+            if (remote.settings.updatedAt > localTs) {
+              const dec = await decryptPayload<Partial<SyncedSettings>>(remote.settings.encrypted, sync.encKeyB64);
+              if (dec && Array.isArray(dec.providers)) {
+                useSettings.getState().set(dec);
+                useSync.getState().set({ settingsUpdatedAt: remote.settings.updatedAt });
+              }
             }
           }
-        }
-      } finally {
-        suppressHooks = false;
-      }
-
-      // Upload PDF blobs that the server is missing
-      const localDocs = await db.docs.toArray();
-      if (res.missingBlobs.length > 0) {
-        const docByHash = new Map<string, DocRecord>();
-        for (const d of localDocs) if (d.hasPdf && d.hash) docByHash.set(d.hash, d);
-        for (let i = 0; i < res.missingBlobs.length; i++) {
-          const h = res.missingBlobs[i];
-          const d = docByHash.get(h);
-          if (!d) continue;
-          const b = await db.blobs.get(d.id);
-          if (!b) continue;
-          useSync.getState().set({ progress: `上传 PDF (${i + 1}/${res.missingBlobs.length})…` });
-          const upRes = await fetch(`${normalizeServerUrl(sync.serverUrl)}/api/blobs/${h}`, {
-            method: 'PUT',
-            headers: { Authorization: `Bearer ${sync.token}`, 'Content-Type': 'application/pdf' },
-            body: b.blob,
-          });
-          if (!upRes.ok) {
-            console.warn('blob upload failed', h, upRes.status);
-          }
+        } finally {
+          suppressHooks = false;
         }
       }
 
-      // Download PDF blobs that exist remotely (referenced by merged docs) but are missing locally
-      const missingLocal = [];
-      for (const d of localDocs) {
-        if (!d.hasPdf || !d.hash) continue;
-        const exists = await db.blobs.get(d.id);
-        if (!exists) missingLocal.push(d);
-      }
-      for (let i = 0; i < missingLocal.length; i++) {
-        const d = missingLocal[i];
-        useSync.getState().set({ progress: `下载 PDF (${i + 1}/${missingLocal.length})…` });
-        const dlRes = await fetch(`${normalizeServerUrl(sync.serverUrl)}/api/blobs/${d.hash}`, {
-          headers: { Authorization: `Bearer ${sync.token}` },
-        });
-        if (dlRes.ok) {
-          const buf = await dlRes.arrayBuffer();
-          suppressHooks = true;
-          try {
-            await db.blobs.put({ id: d.id, blob: new Blob([buf], { type: 'application/pdf' }) });
-          } finally {
-            suppressHooks = false;
-          }
-        }
-      }
+      const nextTombstones =
+        res.mode === 'full' && remote?.deleted
+          ? { ...emptyTombstones(), ...remote.deleted }
+          : useSync.getState().tombstones;
 
       useSync.getState().set({
         status: 'ok',
@@ -367,8 +525,11 @@ export async function syncNow(): Promise<boolean> {
         lastError: '',
         lastSyncAt: Date.now(),
         lastRevision: res.revision,
-        tombstones: res.state.deleted ?? emptyTombstones(),
+        tombstones: nextTombstones,
       });
+
+      // Kick off PDF blob uploads/downloads asynchronously so the UI finishes syncing immediately!
+      syncBlobsInBackground(res.missingBlobs ?? []);
       return true;
     } catch (e) {
       const err = e as Error & { status?: number };
@@ -382,7 +543,7 @@ export async function syncNow(): Promise<boolean> {
       inFlight = null;
       if (rerunQueued) {
         rerunQueued = false;
-        setTimeout(() => void syncNow(), 500);
+        setTimeout(() => void syncNow(), 350);
       }
     }
   })();
@@ -393,7 +554,7 @@ export async function syncNow(): Promise<boolean> {
 let autoInit = false;
 let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 
-function scheduleAutoSync(delayMs = 5000) {
+function scheduleAutoSync(delayMs = 2000) {
   const s = useSync.getState();
   if (!s.token || !s.autoSync) return;
   if (debounceTimer) clearTimeout(debounceTimer);
@@ -403,7 +564,7 @@ function scheduleAutoSync(delayMs = 5000) {
   }, delayMs);
 }
 
-/** Attach Dexie & settings hooks once at app startup so local changes & deletions auto-sync. */
+/** Attach Dexie & settings hooks once at app startup so local changes & deletions auto-sync incrementally. */
 export function initAutoSync() {
   if (autoInit) return;
   autoInit = true;
@@ -414,20 +575,30 @@ export function initAutoSync() {
     tbl.hook('deleting', (primKey) => {
       if (suppressHooks) return;
       useSync.getState().recordDelete(name, String(primKey));
-      scheduleAutoSync(4000);
+      scheduleAutoSync(1800);
     });
-    tbl.hook('creating', () => {
+    tbl.hook('creating', (primKey, obj) => {
       if (suppressHooks) return;
-      scheduleAutoSync(6000);
+      const id = String(primKey ?? (obj as { id?: string })?.id ?? '');
+      if (id) useSync.getState().markDirty(name, id);
+      scheduleAutoSync(2000);
     });
-    tbl.hook('updating', () => {
+    tbl.hook('updating', (_mods, primKey) => {
       if (suppressHooks) return;
-      scheduleAutoSync(6000);
+      useSync.getState().markDirty(name, String(primKey));
+      scheduleAutoSync(2500);
     });
   }
-  db.translations.hook('creating', () => {
+  db.translations.hook('creating', (primKey, obj) => {
     if (suppressHooks) return;
-    scheduleAutoSync(10_000);
+    const key = String(primKey ?? (obj as { key?: string })?.key ?? '');
+    if (key) useSync.getState().markDirty('translations', key);
+    scheduleAutoSync(5000);
+  });
+  db.translations.hook('updating', (_mods, primKey) => {
+    if (suppressHooks) return;
+    useSync.getState().markDirty('translations', String(primKey));
+    scheduleAutoSync(5000);
   });
 
   // Track local settings edits for E2E settings sync
@@ -435,16 +606,16 @@ export function initAutoSync() {
     if (suppressHooks) return;
     const changed = SYNCED_SETTING_KEYS.some((k) => JSON.stringify(cur[k]) !== JSON.stringify(prev[k]));
     if (changed) {
-      useSync.getState().set({ settingsUpdatedAt: Date.now() });
-      scheduleAutoSync(4000);
+      useSync.getState().set({ settingsUpdatedAt: Date.now(), dirtySettings: true });
+      scheduleAutoSync(2500);
     }
   });
 
-  // Initial sync shortly after load + periodic refresh + online/visibility resume
+  // Initial sync shortly after load + fast lightweight polling + online/visibility resume
   setTimeout(() => {
     const s = useSync.getState();
     if (s.token && s.autoSync) void syncNow();
-  }, 1500);
+  }, 1000);
 
   if (typeof window !== 'undefined') {
     window.addEventListener('online', () => {
@@ -454,7 +625,7 @@ export function initAutoSync() {
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'visible') {
         const s = useSync.getState();
-        if (s.token && s.autoSync && Date.now() - s.lastSyncAt > 10_000) void syncNow();
+        if (s.token && s.autoSync && Date.now() - s.lastSyncAt > 3000) void syncNow();
       } else if (document.visibilityState === 'hidden') {
         // Flush pending local changes right before iPadOS Safari suspends the tab
         if (debounceTimer) {
@@ -473,9 +644,13 @@ export function initAutoSync() {
         if (s.token && s.autoSync) void syncNow();
       }
     });
+    // Lightweight delta check every 25s while visible (~120 bytes when unchanged)
     setInterval(() => {
       const s = useSync.getState();
       if (document.visibilityState === 'visible' && s.token && s.autoSync) void syncNow();
-    }, 120_000);
+    }, 25_000);
   }
 }
+
+export type { DirtyMap, SyncTable };
+export { emptyDirty };

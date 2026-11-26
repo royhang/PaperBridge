@@ -2,11 +2,17 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 
 export type TombstoneTable = 'docs' | 'collections' | 'notes' | 'inks' | 'glossary' | 'chats';
+export type SyncTable = TombstoneTable | 'translations';
 
 export type TombstoneMap = Record<TombstoneTable, Record<string, number>>;
+export type DirtyMap = Record<SyncTable, string[]>;
 
 export function emptyTombstones(): TombstoneMap {
   return { docs: {}, collections: {}, notes: {}, inks: {}, glossary: {}, chats: {} };
+}
+
+export function emptyDirty(): DirtyMap {
+  return { docs: [], collections: [], notes: [], inks: [], glossary: [], chats: [], translations: [] };
 }
 
 export function defaultSyncServerUrl(): string {
@@ -29,13 +35,21 @@ export interface SyncStore {
   lastSyncAt: number;
   lastRevision: number;
   tombstones: TombstoneMap;
+  /** Record IDs modified/created locally since the last successful delta sync. */
+  dirty: DirtyMap;
+  /** Newly recorded tombstones not yet acknowledged by the server. */
+  dirtyTombstones: TombstoneMap;
+  dirtySettings: boolean;
 
   // Ephemeral runtime state
   status: 'idle' | 'syncing' | 'ok' | 'error';
   progress: string;
+  blobProgress: string;
   lastError: string;
 
   set: (patch: Partial<SyncStore>) => void;
+  markDirty: (table: SyncTable, id: string) => void;
+  clearDirty: (sent: DirtyMap, sentDeletes: TombstoneMap, sentSettings: boolean) => void;
   recordDelete: (table: TombstoneTable, id: string, at?: number) => void;
   clearAuth: () => void;
 }
@@ -53,17 +67,54 @@ export const useSync = create<SyncStore>()(
       lastSyncAt: 0,
       lastRevision: 0,
       tombstones: emptyTombstones(),
+      dirty: emptyDirty(),
+      dirtyTombstones: emptyTombstones(),
+      dirtySettings: false,
 
       status: 'idle',
       progress: '',
+      blobProgress: '',
       lastError: '',
 
       set: (patch) => set(patch),
+      markDirty: (table, id) =>
+        set((s) => {
+          const list = s.dirty[table];
+          if (list.includes(id)) return s;
+          return { dirty: { ...s.dirty, [table]: [...list, id] } };
+        }),
+      clearDirty: (sent, sentDeletes, sentSettings) =>
+        set((s) => {
+          const nextDirty = emptyDirty();
+          for (const t of Object.keys(nextDirty) as SyncTable[]) {
+            const done = new Set(sent[t] ?? []);
+            nextDirty[t] = (s.dirty[t] ?? []).filter((id) => !done.has(id));
+          }
+          const nextDel = emptyTombstones();
+          for (const t of Object.keys(nextDel) as TombstoneTable[]) {
+            const cur = s.dirtyTombstones[t] ?? {};
+            const ack = sentDeletes[t] ?? {};
+            const rem: Record<string, number> = {};
+            for (const [id, ts] of Object.entries(cur)) {
+              if ((ack[id] ?? 0) < ts) rem[id] = ts;
+            }
+            nextDel[t] = rem;
+          }
+          return {
+            dirty: nextDirty,
+            dirtyTombstones: nextDel,
+            dirtySettings: sentSettings ? false : s.dirtySettings,
+          };
+        }),
       recordDelete: (table, id, at = Date.now()) =>
         set((s) => ({
           tombstones: {
             ...s.tombstones,
             [table]: { ...s.tombstones[table], [id]: Math.max(s.tombstones[table][id] ?? 0, at) },
+          },
+          dirtyTombstones: {
+            ...s.dirtyTombstones,
+            [table]: { ...s.dirtyTombstones[table], [id]: Math.max(s.dirtyTombstones[table][id] ?? 0, at) },
           },
         })),
       clearAuth: () =>
@@ -73,8 +124,12 @@ export const useSync = create<SyncStore>()(
           encKeyB64: '',
           lastSyncAt: 0,
           lastRevision: 0,
+          dirty: emptyDirty(),
+          dirtyTombstones: emptyTombstones(),
+          dirtySettings: false,
           status: 'idle',
           progress: '',
+          blobProgress: '',
           lastError: '',
         }),
     }),
@@ -91,6 +146,9 @@ export const useSync = create<SyncStore>()(
         lastSyncAt: s.lastSyncAt,
         lastRevision: s.lastRevision,
         tombstones: s.tombstones,
+        dirty: s.dirty,
+        dirtyTombstones: s.dirtyTombstones,
+        dirtySettings: s.dirtySettings,
       }),
       merge: (persisted, current) => {
         const p = (persisted ?? {}) as Partial<SyncStore>;
@@ -98,6 +156,8 @@ export const useSync = create<SyncStore>()(
           ...current,
           ...p,
           tombstones: { ...emptyTombstones(), ...(p.tombstones ?? {}) },
+          dirty: { ...emptyDirty(), ...(p.dirty ?? {}) },
+          dirtyTombstones: { ...emptyTombstones(), ...(p.dirtyTombstones ?? {}) },
         };
       },
     },

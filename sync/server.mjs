@@ -21,6 +21,7 @@ import { createReadStream, createWriteStream, existsSync, mkdirSync, readFileSyn
 import { createServer } from 'node:http';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { gunzipSync, gzipSync } from 'node:zlib';
 
 const USERNAME_RE = /^[a-z0-9][a-z0-9._-]{2,31}$/;
 const HASH_RE = /^[0-9a-f]{64}$/;
@@ -52,6 +53,20 @@ function readJsonOr(file, fallback) {
   return JSON.parse(readFileSync(file, 'utf8'));
 }
 
+function emptyRevs() {
+  return {
+    docs: {},
+    collections: {},
+    notes: {},
+    inks: {},
+    glossary: {},
+    chats: {},
+    translations: {},
+    deleted: { docs: {}, collections: {}, notes: {}, inks: {}, glossary: {}, chats: {} },
+    settings: 0,
+  };
+}
+
 function emptyState() {
   return {
     revision: 0,
@@ -65,56 +80,131 @@ function emptyState() {
     translations: {},
     settings: null,
     deleted: { docs: {}, collections: {}, notes: {}, inks: {}, glossary: {}, chats: {} },
+    revsInitRev: 0,
+    revs: emptyRevs(),
   };
 }
 
-function mergeTable(serverMap, clientMap, serverDel, clientDel, tsOf) {
-  const deleted = { ...(serverDel ?? {}) };
-  for (const [id, ts] of Object.entries(clientDel ?? {})) {
-    const n = Number(ts) || 0;
-    if (n > (deleted[id] ?? 0)) deleted[id] = n;
+function ensureRevs(st) {
+  if (st.revs && typeof st.revsInitRev === 'number') {
+    st.revs = {
+      ...emptyRevs(),
+      ...st.revs,
+      deleted: { ...emptyRevs().deleted, ...(st.revs.deleted ?? {}) },
+    };
+    return st;
   }
-  const merged = {};
-  const ids = new Set([...Object.keys(serverMap ?? {}), ...Object.keys(clientMap ?? {})]);
-  for (const id of ids) {
-    const a = serverMap?.[id];
-    const b = clientMap?.[id];
-    let winner;
-    if (a && b) winner = tsOf(b) >= tsOf(a) ? b : a;
-    else winner = b ?? a;
-    if (!winner) continue;
-    const wts = tsOf(winner);
-    if ((deleted[id] ?? 0) > wts) continue;
-    merged[id] = winner;
+  const initRev = Number(st.revision ?? 0);
+  const revs = emptyRevs();
+  for (const t of ['docs', 'collections', 'notes', 'inks', 'glossary', 'chats', 'translations']) {
+    for (const id of Object.keys(st[t] ?? {})) revs[t][id] = initRev;
   }
-  return { merged, deleted };
+  for (const t of ['docs', 'collections', 'notes', 'inks', 'glossary', 'chats']) {
+    for (const id of Object.keys(st.deleted?.[t] ?? {})) revs.deleted[t][id] = initRev;
+  }
+  revs.settings = st.settings ? initRev : 0;
+  st.revs = revs;
+  st.revsInitRev = initRev;
+  return st;
 }
 
-function mergeStates(serverState, payload) {
-  const next = emptyState();
-  const docs = mergeTable(serverState.docs, payload.docs, serverState.deleted?.docs, payload.deleted?.docs, (d) => Number(d.updatedAt ?? d.addedAt ?? 0));
-  const collections = mergeTable(serverState.collections, payload.collections, serverState.deleted?.collections, payload.deleted?.collections, (c) => Number(c.updatedAt ?? c.createdAt ?? 0));
-  const notes = mergeTable(serverState.notes, payload.notes, serverState.deleted?.notes, payload.deleted?.notes, (n) => Number(n.createdAt ?? 0));
-  const inks = mergeTable(serverState.inks, payload.inks, serverState.deleted?.inks, payload.deleted?.inks, (s) => Number(s.createdAt ?? 0));
-  const glossary = mergeTable(serverState.glossary, payload.glossary, serverState.deleted?.glossary, payload.deleted?.glossary, (g) => Number(g.createdAt ?? 0));
-  const chats = mergeTable(serverState.chats, payload.chats, serverState.deleted?.chats, payload.deleted?.chats, (c) => Number(c.updatedAt ?? 0));
+function sameJson(a, b) {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
+function mergeTable(serverMap, clientMap, serverDel, clientDel, tsOf, serverRevs, serverDelRevs, nextRev) {
+  const deleted = { ...(serverDel ?? {}) };
+  const delRevs = { ...(serverDelRevs ?? {}) };
+  const merged = { ...(serverMap ?? {}) };
+  const itemRevs = { ...(serverRevs ?? {}) };
+  let changed = false;
+
+  for (const [id, ts] of Object.entries(clientDel ?? {})) {
+    const n = Number(ts) || 0;
+    if (n > (deleted[id] ?? 0)) {
+      deleted[id] = n;
+      delRevs[id] = nextRev;
+      changed = true;
+      const cur = merged[id];
+      if (cur && n > tsOf(cur)) {
+        delete merged[id];
+        delete itemRevs[id];
+      }
+    }
+  }
+
+  for (const [id, b] of Object.entries(clientMap ?? {})) {
+    if (!b) continue;
+    const a = merged[id];
+    const bTs = tsOf(b);
+    const delTs = deleted[id] ?? 0;
+    if (delTs > bTs) {
+      if (a && delTs > tsOf(a)) {
+        delete merged[id];
+        delete itemRevs[id];
+        changed = true;
+      }
+      continue;
+    }
+    if (!a) {
+      merged[id] = b;
+      itemRevs[id] = nextRev;
+      changed = true;
+    } else if (bTs >= tsOf(a) && !sameJson(a, b)) {
+      merged[id] = b;
+      itemRevs[id] = nextRev;
+      changed = true;
+    }
+  }
+  return { merged, deleted, itemRevs, delRevs, changed };
+}
+
+function mergeStates(rawServerState, payload) {
+  const hadRevs = !!(rawServerState.revs && typeof rawServerState.revsInitRev === 'number');
+  const serverState = ensureRevs(rawServerState);
+  const nextRev = (serverState.revision ?? 0) + 1;
+  const revs = serverState.revs;
+
+  const docs = mergeTable(serverState.docs, payload.docs, serverState.deleted?.docs, payload.deleted?.docs, (d) => Number(d.updatedAt ?? d.addedAt ?? 0), revs.docs, revs.deleted.docs, nextRev);
+  const collections = mergeTable(serverState.collections, payload.collections, serverState.deleted?.collections, payload.deleted?.collections, (c) => Number(c.updatedAt ?? c.createdAt ?? 0), revs.collections, revs.deleted.collections, nextRev);
+  const notes = mergeTable(serverState.notes, payload.notes, serverState.deleted?.notes, payload.deleted?.notes, (n) => Number(n.createdAt ?? 0), revs.notes, revs.deleted.notes, nextRev);
+  const inks = mergeTable(serverState.inks, payload.inks, serverState.deleted?.inks, payload.deleted?.inks, (s) => Number(s.createdAt ?? 0), revs.inks, revs.deleted.inks, nextRev);
+  const glossary = mergeTable(serverState.glossary, payload.glossary, serverState.deleted?.glossary, payload.deleted?.glossary, (g) => Number(g.createdAt ?? 0), revs.glossary, revs.deleted.glossary, nextRev);
+  const chats = mergeTable(serverState.chats, payload.chats, serverState.deleted?.chats, payload.deleted?.chats, (c) => Number(c.updatedAt ?? 0), revs.chats, revs.deleted.chats, nextRev);
+
+  let changed = !hadRevs || docs.changed || collections.changed || notes.changed || inks.changed || glossary.changed || chats.changed;
 
   // Translations: additive LWW by key
   const translations = { ...(serverState.translations ?? {}) };
+  const transRevs = { ...(revs.translations ?? {}) };
   for (const [k, v] of Object.entries(payload.translations ?? {})) {
     const prev = translations[k];
-    if (!prev || Number(v?.createdAt ?? 0) >= Number(prev?.createdAt ?? 0)) translations[k] = v;
+    if (!prev || (Number(v?.createdAt ?? 0) >= Number(prev?.createdAt ?? 0) && !sameJson(prev, v))) {
+      translations[k] = v;
+      transRevs[k] = nextRev;
+      changed = true;
+    }
   }
 
   // E2E-encrypted settings blob: newer updatedAt wins
   let settings = serverState.settings ?? null;
+  let settingsRev = Number(revs.settings ?? 0);
   if (payload.settings && typeof payload.settings.encrypted === 'string') {
     const incomingTs = Number(payload.settings.updatedAt ?? 0);
-    if (!settings || incomingTs >= Number(settings.updatedAt ?? 0)) {
+    if (!settings || (incomingTs >= Number(settings.updatedAt ?? 0) && (incomingTs > Number(settings.updatedAt ?? 0) || payload.settings.encrypted !== settings.encrypted))) {
       settings = { updatedAt: incomingTs, encrypted: payload.settings.encrypted };
+      settingsRev = nextRev;
+      changed = true;
     }
   }
 
+  if (!changed) {
+    return { state: serverState, changed: false };
+  }
+
+  const next = emptyState();
   next.docs = docs.merged;
   next.collections = collections.merged;
   next.notes = notes.merged;
@@ -131,27 +221,98 @@ function mergeStates(serverState, payload) {
     glossary: glossary.deleted,
     chats: chats.deleted,
   };
-  next.revision = (serverState.revision ?? 0) + 1;
+  next.revsInitRev = serverState.revsInitRev;
+  next.revs = {
+    docs: docs.itemRevs,
+    collections: collections.itemRevs,
+    notes: notes.itemRevs,
+    inks: inks.itemRevs,
+    glossary: glossary.itemRevs,
+    chats: chats.itemRevs,
+    translations: transRevs,
+    deleted: {
+      docs: docs.delRevs,
+      collections: collections.delRevs,
+      notes: notes.delRevs,
+      inks: inks.delRevs,
+      glossary: glossary.delRevs,
+      chats: chats.delRevs,
+    },
+    settings: settingsRev,
+  };
+  next.revision = nextRev;
   next.updatedAt = Date.now();
-  return next;
+  return { state: next, changed: true };
+}
+
+function publicState(st) {
+  return {
+    revision: st.revision,
+    updatedAt: st.updatedAt,
+    docs: st.docs,
+    collections: st.collections,
+    notes: st.notes,
+    inks: st.inks ?? {},
+    glossary: st.glossary,
+    chats: st.chats,
+    translations: st.translations,
+    settings: st.settings,
+    deleted: st.deleted,
+  };
+}
+
+function sliceSince(st, baseRevision) {
+  const revs = st.revs ?? emptyRevs();
+  const slice = {
+    revision: st.revision,
+    updatedAt: st.updatedAt,
+    docs: {},
+    collections: {},
+    notes: {},
+    inks: {},
+    glossary: {},
+    chats: {},
+    translations: {},
+    settings: (revs.settings ?? 0) > baseRevision ? st.settings : null,
+    deleted: { docs: {}, collections: {}, notes: {}, inks: {}, glossary: {}, chats: {} },
+  };
+  for (const t of ['docs', 'collections', 'notes', 'inks', 'glossary', 'chats', 'translations']) {
+    const map = st[t] ?? {};
+    const rmap = revs[t] ?? {};
+    for (const [id, r] of Object.entries(rmap)) {
+      if (r > baseRevision && map[id] !== undefined) slice[t][id] = map[id];
+    }
+  }
+  for (const t of ['docs', 'collections', 'notes', 'inks', 'glossary', 'chats']) {
+    const dmap = st.deleted?.[t] ?? {};
+    const rmap = revs.deleted?.[t] ?? {};
+    for (const [id, r] of Object.entries(rmap)) {
+      if (r > baseRevision && dmap[id] !== undefined) slice.deleted[t][id] = dmap[id];
+    }
+  }
+  return slice;
 }
 
 function corsHeaders() {
   return {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET, POST, PUT, HEAD, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+    'Access-Control-Allow-Headers': 'Content-Type, Content-Encoding, Authorization',
     'Access-Control-Max-Age': '86400',
   };
 }
 
-function sendJson(res, status, body) {
-  const buf = Buffer.from(JSON.stringify(body));
+function sendJson(res, status, body, req = null) {
+  const raw = Buffer.from(JSON.stringify(body));
+  const acceptsGzip = !!req && /\bgzip\b/i.test(String(req.headers['accept-encoding'] ?? ''));
+  const useGzip = acceptsGzip && raw.length > 1024;
+  const buf = useGzip ? gzipSync(raw, { level: 6 }) : raw;
   res.writeHead(status, {
     ...corsHeaders(),
     'Content-Type': 'application/json; charset=utf-8',
     'Content-Length': String(buf.length),
     'Cache-Control': 'no-store',
+    ...(useGzip ? { 'Content-Encoding': 'gzip', Vary: 'Accept-Encoding' } : {}),
   });
   res.end(buf);
 }
@@ -168,7 +329,18 @@ async function readJsonBody(req, maxBytes) {
     }
     chunks.push(chunk);
   }
-  const text = Buffer.concat(chunks).toString('utf8');
+  let buf = Buffer.concat(chunks);
+  if (!buf.length) return {};
+  if (String(req.headers['content-encoding'] ?? '').toLowerCase() === 'gzip') {
+    try {
+      buf = gunzipSync(buf, { maxOutputLength: maxBytes });
+    } catch {
+      const err = new Error('Invalid gzip payload');
+      err.status = 400;
+      throw err;
+    }
+  }
+  const text = buf.toString('utf8');
   if (!text) return {};
   try {
     return JSON.parse(text);
@@ -354,7 +526,7 @@ export function createSyncServer(opts = {}) {
         const incomingTitleNorm = title.length > 8 ? normTitle(title) : '';
 
         const saved = await withUserLock(session.username, () => {
-          const st = loadState(session.username);
+          const st = ensureRevs(loadState(session.username));
           const now = Date.now();
           // Find existing active duplicate
           const existing = Object.values(st.docs ?? {}).find((d) => {
@@ -428,29 +600,53 @@ export function createSyncServer(opts = {}) {
 
           st.docs[doc.id] = doc;
           st.revision = (st.revision ?? 0) + 1;
+          st.revs.docs[doc.id] = st.revision;
           st.updatedAt = now;
           saveState(session.username, st);
           return { ok: true, docId: doc.id, title: doc.title, duplicate, hasPdf: doc.hasPdf, revision: st.revision };
         });
-        return sendJson(res, 200, saved);
+        return sendJson(res, 200, saved, req);
       }
 
       // POST /api/sync/merge
       if (req.method === 'POST' && path === '/api/sync/merge') {
         const payload = await readJsonBody(req, maxSyncBytes);
+        const baseRev = Number(payload.baseRevision ?? 0) || 0;
         const result = await withUserLock(session.username, () => {
           const cur = loadState(session.username);
-          const merged = mergeStates(cur, payload);
-          saveState(session.username, merged);
+          const hadRevs = !!(cur.revs && typeof cur.revsInitRev === 'number');
+          const { state: merged, changed } = mergeStates(cur, payload);
+          if (changed) saveState(session.username, merged);
           const neededHashes = new Set();
           for (const d of Object.values(merged.docs)) {
             if (d?.hasPdf && typeof d.hash === 'string' && HASH_RE.test(d.hash) && !existsSync(blobPath(d.hash))) {
               neededHashes.add(d.hash);
             }
           }
-          return { revision: merged.revision, updatedAt: merged.updatedAt, state: merged, missingBlobs: [...neededHashes], ...proxyHint };
+          const canDelta = hadRevs && baseRev > 0 && baseRev <= merged.revision && baseRev >= (merged.revsInitRev ?? 0);
+          if (canDelta && baseRev === merged.revision) {
+            return { mode: 'unchanged', revision: merged.revision, updatedAt: merged.updatedAt, missingBlobs: [...neededHashes], ...proxyHint };
+          }
+          if (canDelta) {
+            return {
+              mode: 'delta',
+              revision: merged.revision,
+              updatedAt: merged.updatedAt,
+              state: sliceSince(merged, baseRev),
+              missingBlobs: [...neededHashes],
+              ...proxyHint,
+            };
+          }
+          return {
+            mode: 'full',
+            revision: merged.revision,
+            updatedAt: merged.updatedAt,
+            state: publicState(merged),
+            missingBlobs: [...neededHashes],
+            ...proxyHint,
+          };
         });
-        return sendJson(res, 200, result);
+        return sendJson(res, 200, result, req);
       }
 
       // Blob endpoints: /api/blobs/:sha256

@@ -31,6 +31,7 @@ export function TabBar() {
   const syncToken = useSync((s) => s.token);
   const syncStatus = useSync((s) => s.status);
   const syncProgress = useSync((s) => s.progress);
+  const blobProgress = useSync((s) => s.blobProgress);
   const syncErr = useSync((s) => s.lastError);
   const lastSyncAt = useSync((s) => s.lastSyncAt);
 
@@ -205,7 +206,7 @@ export function TabBar() {
                 ? syncProgress || '正在同步…'
                 : syncStatus === 'error'
                   ? `同步失败：${syncErr}（点击查看）`
-                  : `已登录 @${syncUser}${lastSyncAt ? ` · 上次同步 ${new Date(lastSyncAt).toLocaleTimeString()}` : ''}（点击立即同步，右键打开同步设置）`
+                  : `已登录 @${syncUser}${blobProgress ? ` · ${blobProgress}` : ''}${lastSyncAt ? ` · 上次同步 ${new Date(lastSyncAt).toLocaleTimeString()}` : ''}（点击立即同步，右键打开同步设置）`
               : '登录账号以在多端共享文献与设置'
           }
           onClick={() => {
