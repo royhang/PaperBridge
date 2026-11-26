@@ -35,6 +35,9 @@ export function ChatPanel() {
   const [input, setInput] = useState('');
   const [streaming, setStreaming] = useState<string | null>(null);
   const [error, setError] = useState('');
+  /** Whether to attach the full paper text as system context (can be turned off for quoted excerpts to save tokens). */
+  const [includeFullText, setIncludeFullText] = useState(true);
+  const [docChars, setDocChars] = useState<number | null>(null);
   const ctrlRef = useRef<AbortController | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -46,6 +49,9 @@ export function ChatPanel() {
   useEffect(() => {
     if (!handoff) return;
     setInput((v) => `> ${handoff.text.replace(/\n/g, '\n> ')}\n\n${v}`);
+    // Default to excerpt-only mode when quoting a passage from the PDF so users save tokens & latency;
+    // they can still toggle "附带全文" on with 1 click if they want cross-paper context.
+    setIncludeFullText(false);
     consumeHandoff();
     setTimeout(() => inputRef.current?.focus(), 0);
   }, [handoff, consumeHandoff]);
@@ -56,7 +62,7 @@ export function ChatPanel() {
 
   useEffect(() => () => ctrlRef.current?.abort(), []);
 
-  const send = async (text: string) => {
+  const send = async (text: string, forceFullText?: boolean) => {
     // Synchronous lock: the controller is claimed before the first await.
     if (!docId || !pdf || !text.trim() || ctrlRef.current) return;
     setError('');
@@ -67,6 +73,8 @@ export function ChatPanel() {
       setError(describeError(e));
       return;
     }
+    const useFull = forceFullText ?? includeFullText;
+    if (forceFullText) setIncludeFullText(true);
     const ctrl = new AbortController();
     ctrlRef.current = ctrl;
     const s = useSettings.getState();
@@ -85,13 +93,17 @@ export function ChatPanel() {
         updatedAt: Date.now(),
       });
       setChatId(id);
-      if (docTextRef.current?.docId !== docId) {
-        docTextRef.current = { docId, text: await getDocumentText(pdf, docId, CONTEXT_CHARS) };
+      let paperContext = '';
+      if (useFull) {
+        if (docTextRef.current?.docId !== docId) {
+          const extracted = await getDocumentText(pdf, docId, CONTEXT_CHARS);
+          docTextRef.current = { docId, text: extracted };
+          setDocChars(extracted.length);
+        }
+        paperContext = `\n\n<paper>\n${docTextRef.current.text}\n</paper>`;
       }
       ctrl.signal.throwIfAborted();
-      const system =
-        fillTemplate(s.prompts.chatSystem, { to: langLabel(s.targetLang), title }) +
-        `\n\n<paper>\n${docTextRef.current.text}\n</paper>`;
+      const system = fillTemplate(s.prompts.chatSystem, { to: langLabel(s.targetLang), title }) + paperContext;
       for await (const d of llm.provider.chat({
         messages: [{ role: 'system', content: system }, ...history.slice(-20)],
         signal: ctrl.signal,
@@ -154,7 +166,7 @@ export function ChatPanel() {
             <p>基于整篇论文内容提问。</p>
             <div className="quick-actions" style={{ justifyContent: 'center' }}>
               {QUICK.map((q) => (
-                <button key={q.label} className="chip" onClick={() => void send(q.prompt)}>
+                <button key={q.label} className="chip" onClick={() => void send(q.prompt, true)}>
                   {q.label}
                 </button>
               ))}
@@ -187,10 +199,30 @@ export function ChatPanel() {
         )}
       </div>
       <div className="chat-input">
+        <div className="row" style={{ gap: 6, marginBottom: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+          <button
+            type="button"
+            className={`filter-pill${includeFullText ? ' active' : ''}`}
+            disabled={streaming !== null}
+            title={
+              includeFullText
+                ? '当前会附带论文全文作为上下文（回答跨段落问题更准确；点击切换为仅发送引用段落以节省 token）'
+                : '当前仅发送你引用/输入的段落与对话历史（省 90%+ token、响应更快；点击切换为附带全文）'
+            }
+            onClick={() => setIncludeFullText((v) => !v)}
+          >
+            {includeFullText ? '✓ 附带全文上下文' : '仅当前引用（省 Token）'}
+          </button>
+          {includeFullText && docChars !== null && (
+            <span className="hint" style={{ fontSize: 11 }}>
+              约 {Math.max(1, Math.round(docChars / 4000))}k tokens
+            </span>
+          )}
+        </div>
         {messages.length > 0 && (
           <div className="quick-actions">
             {QUICK.slice(0, 4).map((q) => (
-              <button key={q.label} className="chip" disabled={streaming !== null} onClick={() => void send(q.prompt)}>
+              <button key={q.label} className="chip" disabled={streaming !== null} onClick={() => void send(q.prompt, true)}>
                 {q.label}
               </button>
             ))}

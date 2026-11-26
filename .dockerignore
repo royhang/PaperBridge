@@ -1,0 +1,11 @@
+.git
+.github
+node_modules
+dist
+desktop
+extension
+docs
+data
+sync-data
+*.log
+.DS_Store

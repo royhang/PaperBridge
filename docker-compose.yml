@@ -1,0 +1,23 @@
+services:
+  paperbridge:
+    build: .
+    image: paperbridge:latest
+    container_name: paperbridge
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      # 是否允许新用户注册（单人自用注册完可改为 0）
+      ALLOW_REGISTER: "1"
+      # 可选：设置注册邀请码，留空则无需邀请码
+      INVITE_CODE: ""
+      # 内置跨域代理允许转发的 API 主机（* 表示允许任意模型/学校接口，也可填逗号分隔白名单）
+      ALLOWED_HOSTS: "*"
+      # 可选：为跨域代理设置访问令牌（登录云同步后前端会自动下发令牌，无需手动填写）
+      PROXY_TOKEN: ""
+      # 可选：同源免令牌白名单（例：https://paper.yourdomain.com）
+      ALLOWED_ORIGINS: ""
+      # 单个 PDF 上限（MB）
+      MAX_PDF_MB: "150"
+    volumes:
+      - ./data:/data

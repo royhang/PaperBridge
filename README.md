@@ -1,16 +1,19 @@
 <div align="center">
 
-<img src="desktop/build/icon.png" alt="PaperBridge" width="84" height="84" />
+<img src="desktop/build/icon.png" alt="PaperBridge" width="88" height="88" />
 
 # PaperBridge
 
-**专为研究生与科研人员打造的开源文献阅读 · 保版式双栏翻译 · Apple Pencil 手写 · 多端同步工作台**
+**专为研究生与科研人员打造的一体化开源文献工作台**
+<br/>
+**保版式双栏译文 · Apple Pencil 原/译双层手写 · 类 Zotero 文献库 · 知网一键插件 · 毫秒级加密云同步**
 
 [![Release](https://img.shields.io/github/v/release/royhang/PaperBridge?color=2563eb&label=最新版本)](https://github.com/royhang/PaperBridge/releases)
-[![CI](https://github.com/royhang/PaperBridge/actions/workflows/ci.yml/badge.svg)](https://github.com/royhang/PaperBridge/actions/workflows/ci.yml)
+[![CI](https://img.shields.io/github/actions/workflow/status/royhang/PaperBridge/ci.yml?label=CI)](https://github.com/royhang/PaperBridge/actions/workflows/ci.yml)
+[![Docker](https://img.shields.io/badge/Docker-一键自托管-0ea5e9?logo=docker&logoColor=white)](#一键-docker-自托管部署推荐)
 [![License: MIT](https://img.shields.io/badge/License-MIT-10b981.svg)](LICENSE)
 
-[在线体验](https://royhang.github.io/PaperBridge/) · [Windows 免安装版 & 浏览器插件下载](https://github.com/royhang/PaperBridge/releases) · [浏览器代理部署](proxy/README.md)
+[在线体验](https://royhang.github.io/PaperBridge/) · [Windows 免安装版 & 浏览器插件](https://github.com/royhang/PaperBridge/releases) · [一键 Docker 部署](#一键-docker-自托管部署推荐) · [iPadOS 使用指南](#3-ipados-沉浸阅读与-apple-pencil-双层手写)
 
 </div>
 
@@ -18,18 +21,47 @@
 
 ---
 
-## 核心能力一览
+## 为什么选择 PaperBridge？
+
+研究生读论文最痛的点，往往不是缺工具，而是**工具太割裂**：在 **Zotero** 里管文献，导出到 **PDFMathTranslate** 翻排版，再传到 **iPad GoodNotes** 上手写批注，最后复制段落去 **ChatGPT / DeepSeek** 提问——文件来回倒腾，笔记、笔迹、译文散落四处。
+
+**PaperBridge 把这整条科研阅读链路合而为一，而且完全开源、自带 API 零订阅费、本地优先且支持 Docker 一键私有云同步：**
+
+| 能力维度 | **PaperBridge** | Zotero + 翻译插件 | PDFMathTranslate | GoodNotes / MarginNote |
+| --- | :---: | :---: | :---: | :---: |
+| **保版式双栏全文翻译（保留公式/图表/IEEE 双栏）** | ✅ 原生内置，双栏实时对照 | ⚠️ 仅侧栏纯文本翻译 | ✅ 需命令行/单独转换 | ❌ 无 |
+| **iPadOS + Apple Pencil 原文/译文双层独立手写** | ✅ 原/译双层互不串位 + 防误触 | ⚠️ 仅原文批注 | ❌ 无阅读器 | ⚠️ 无法同步译文与题录 |
+| **类 Zotero 嵌套分类 + 彩色标签 + 引用导出** | ✅ 三栏工作台 + GB/T 7714 | ✅ 强项 | ❌ 无文献库 | ❌ 无题录管理 |
+| **知网（CNKI）/ arXiv 浏览器一键抓取插件** | ✅ 配套 Connector 扩展 | ✅ Zotero Connector | ❌ 无 | ❌ 无 |
+| **Web / Windows / iPad 毫秒级增量云同步** | ✅ Docker 自托管 + E2E 加密 | ⚠️ 免费云空间仅 300MB | ❌ 无同步 | ⚠️ 限苹果生态 |
+| **暗夜护眼 PDF 阅读 + AI 论文问答 + 自动术语表** | ✅ 暗夜/柔光纸张 + 省 Token 模式 | ⚠️ 需多款第三方插件拼装 | ❌ 无问答 | ❌ 无 AI 问答 |
+| **隐私与费用** | **MIT 开源 · 自带 Key · 零订阅** | 云存储付费 | AGPL 开源 | 订阅/买断 |
+
+---
+
+## 核心能力全景
 
 ![PaperBridge 核心功能全景图](docs/screenshots/features-bento.png)
 
-| 模块 | 核心特性 |
-| --- | --- |
-| 📄 **保版式双栏全文翻译** | 原位替换译文、保留原论文版式与图表/公式/参考文献；专项优化 **IEEE 双栏中缝切分、首字下沉（Drop-Cap）与小型大写标题**；支持「原文 / 双栏 / 译文」切换、并发翻译与本地缓存、导出「仅译文 / 左右对照 / 双语交替」PDF |
-| ✏️ **iPadOS & Apple Pencil 双层手写** | 深度适配 iPadOS PWA：支持**原文页与译文页各自独立手写图层**（互不遮挡串位）、压感钢笔、荧光笔、橡皮、Safari 原生防手掌误触（仅 Pencil 落笔，手指自由翻页/双指缩放）及阅读器「沉浸模式」 |
-| 🗂️ **类 Zotero 7 三栏文献库** | 多级嵌套分类树、顶部可叠加状态筛选条（未读 / 在读 / 已读 / 星标 / 有笔记 / 无 PDF）、Zotero 彩色标签、未分类 / 重复条目 / 回收站（软删除可恢复）、多文献标签页切换、`GB/T 7714 / APA / BibTeX` 一键引用 |
-| 🧩 **知网 / 学术站一键抓取插件** | 配套 Chrome / Edge 扩展 **PaperBridge Connector**（`extension/`）：浏览**知网（CNKI）、arXiv、IEEE、Nature** 等页面一键选分类、打标签并抓取题录与 PDF（支持桌面端本地直连 + 云端同步直连）；支持知网 GB/T 7714、NoteExpress、EndNote、RIS 批量导入与 `标题_作者.pdf` 自动匹配 |
-| ☁️ **毫秒级增量多端云同步** | 零依赖自托管同步服务（`sync/server.mjs`）：网页版 · Windows 桌面端 · iPadOS 双向同步文献、PDF（SHA-256 去重后台传输 + 打开按需秒下）、分类、彩色标签、笔记、双层手写笔迹与翻译缓存；**增量同步 + 双向 Gzip**，API 配置本地 **AES-256-GCM 端到端加密**后同步 |
-| 💬 **划词高亮 · AI 问答 · 术语表** | 划词流式翻译/解释并持续高亮原句；整篇论文 AI 问答（支持 Markdown 与 LaTeX 公式）；全文翻译前自动提取领域术语表保证译名统一；桌面端内置 Chromium Happy-Eyeballs 跨域代理，直连学校/中转接口零配置 |
+### 五大差异化优势
+
+1. **科研级保版式双栏译文引擎（自研 TypeScript PDF 内容流解析）**
+   - 原位替换译文、保留原论文排版、图表、行内公式原字形（含分数线/根号）与参考文献。
+   - **专项攻克 IEEE / ACM 双栏论文难题**：精准识别跨栏标题/页脚下的 12pt 栏缝（不跨栏粘连）、自动折叠 `\IEEEPARstart` 首字下沉（不漏译第二行）、保护居中小型大写罗马数字标题与作者栏。
+   - 内置并发安全上限（1–3 路可调，默认 3 避免触发 429 限流）、漏句/丢数字/丢公式自动重试、领域术语表自动提取，以及导出「仅译文 / 左右对照 / 双语交替」PDF。
+2. **真·iPadOS 生产力：Apple Pencil 原文 & 译文双层手写 + 暗夜护眼**
+   - 原文页与译文页拥有**各自独立的手写图层**，双栏对照批注互不串位；压感钢笔、荧光笔、橡皮一应俱全。
+   - 针对 Safari 深度实现 **Apple Pencil 原生防手掌误触**（仅 `stylus` 落笔书写，手掌与手指自由滚动、双指捏合缩放），搭配「沉浸阅读」一键隐藏顶栏。
+   - **暗夜模式 PDF 护眼纸张**：黑夜模式下 PDF 自动切换柔和暗夜纸张（不再刺眼纯白），并支持阅读器工具栏一键在「自动暗夜 / 柔光暖纸（保留原图色彩）/ 始终暗夜 / 原始白底」间切换，荧光笔在暗底上自动切为高亮混合模式。
+3. **贴合国内研究生的类 Zotero 7 文献库 + 知网一键抓取**
+   - 无限级嵌套分类树、顶部可叠加状态筛选条（未读 / 在读 / 已读 / 星标 / 有笔记 / 无 PDF）、Zotero 彩色标签、未分类 / 重复条目 / 回收站。
+   - 配套 Chrome / Edge 扩展 **PaperBridge Connector**（`extension/`）：在**知网（CNKI）、arXiv、IEEE、Nature** 页面点击图标，选分类、打标签一键入库（同时支持桌面端本地直连与云服务器直连）；支持知网 GB/T 7714 / NoteExpress / EndNote / RIS 批量解析与 `标题_作者.pdf` 自动匹配。
+4. **毫秒级增量多端云同步 + 端到端加密**
+   - 零依赖自托管同步服务（`sync/server.mjs`）：**增量同步（Delta）+ 双向 Gzip**，画一笔手写/记一条笔记 ~100ms 完成；大体积 PDF 按 **SHA-256 去重**在后台独立队列传输，点开未下载文献时按需优先秒下。
+   - API Key 在离开浏览器前即用你的账号密码做 **PBKDF2 + AES-256-GCM 本地端到端加密**，服务器永远不存明文 Key。
+5. **灵活省钱的 AI 精读问答与全接口兼容**
+   - 划词流式翻译/解释并持续高亮原句；论文问答支持 **「附带全文上下文」与「仅当前引用（省 Token）」一键切换**——引用局部段落提问时默认省去 90%+ 冗余输入 token，点「总结全文」等快捷提问自动附带全文。
+   - 支持 OpenAI / DeepSeek / Claude / Gemini / 通义 / 智谱 / Kimi / 高校内网接口 / 本地 Ollama / DeepL / 百度 / 有道；Windows 桌面端内置 Chromium Happy-Eyeballs 跨域代理，校园接口零配置直连。
 
 ---
 
@@ -48,6 +80,45 @@
 
 ---
 
+## 一键 Docker 自托管部署（推荐）
+
+只需要一台普通 VPS / 实验室服务器 / NAS，一条命令即可在 **单端口（8080）** 同时启动 **PaperBridge 网页端 + 内置跨域代理 + 多端加密云同步服务**：
+
+```bash
+git clone https://github.com/royhang/PaperBridge.git
+cd PaperBridge
+docker compose up -d
+```
+
+启动后访问 `http://<你的服务器IP>:8080`（建议前端套 Caddy / Nginx / Cloudflare Tunnel 开启 HTTPS，以便 iPadOS PWA 与端到端加密正常工作）：
+
+- **数据持久化**：所有同步的 PDF 原文件与用户数据均保存在 `./data` 目录（容器内 `/data`），备份该目录即可完整迁移。
+- **常用环境变量**（在 [docker-compose.yml](docker-compose.yml) 中配置）：
+  - `ALLOW_REGISTER=1`：是否开放注册（个人注册完账号后可设为 `0` 关闭注册）
+  - `INVITE_CODE=`：可选，设置团队/课题组内部注册邀请码
+  - `ALLOWED_HOSTS=*`：内置代理允许转发的模型 API 主机白名单
+  - `PROXY_TOKEN=`：可选，代理令牌（登录云同步后前端自动下发，无需手填）
+
+---
+
+## 全端使用指南
+
+### 1. Windows 桌面客户端（免安装便携版）
+- 在 [GitHub Releases](https://github.com/royhang/PaperBridge/releases) 下载 `PaperBridge-<版本>-win-x64.zip`，解压运行 `PaperBridge.exe`。
+- 内置跨域代理（自动兼容系统代理与 IPv4/IPv6，学校接口 / DeepL / 百度 / 有道直连免配置）、内置中文字体、支持本地端口 `127.0.0.1:23129` 与浏览器插件秒级联动。
+
+### 2. 知网 / 学术站一键入库扩展（PaperBridge Connector）
+1. 在 [GitHub Releases](https://github.com/royhang/PaperBridge/releases) 下载 `PaperBridge-Connector-<版本>.zip` 并解压（或直接加载仓库 `extension/` 目录）。
+2. 在 Chrome / Edge 打开 `chrome://extensions` 开启「开发者模式」→「加载已解压的扩展程序」。
+3. 在知网、arXiv、IEEE 页面点击插件图标，选分类打标签一键入库。
+
+### 3. iPadOS 沉浸阅读与 Apple Pencil 双层手写
+1. 在 iPad Safari 打开你的 PaperBridge HTTPS 地址，点击「分享 → 添加到主屏幕」。
+2. 点击右上角 **「云同步」** 登录同一账号，自动同步全部文献、PDF、笔记、双层笔迹与加密 API 配置。
+3. 阅读器工具栏可一键开启 **手写模式**（默认仅 Pencil 防误触）、切换 **暗夜/柔光 PDF 纸张** 与开启 **沉浸阅读模式**。
+
+---
+
 ## 支持的 API 服务
 
 | 类型 | 服务 | 浏览器直连 |
@@ -56,54 +127,24 @@
 | Anthropic | Claude | ✅ |
 | Google | Gemini | ✅ |
 | 机器翻译 | Google Cloud Translation | ✅ |
-| 机器翻译 | DeepL、百度翻译、有道智云 | ❌ 需[跨域代理](proxy/README.md)（桌面端内置免配置） |
-
-在「设置 → API 服务」中支持一键选择常用服务商、搜索筛选模型列表，以及直接粘贴 `URL + Key`、`.env`、`curl` 命令自动识别填入；可分别指定「翻译服务」与「问答用大模型」。
+| 机器翻译 | DeepL、百度翻译、有道智云 | ❌ 需[跨域代理](proxy/README.md)（桌面端 & Docker 内置免配置） |
 
 ---
 
-## 全端使用指南
-
-### 1. 桌面客户端（Windows 免安装 / macOS / Linux）
-- 直接在 [GitHub Releases](https://github.com/royhang/PaperBridge/releases) 下载 `PaperBridge-<版本>-win-x64.zip`，解压运行 `PaperBridge.exe` 即可。
-- **内置跨域代理**（自动复用系统代理与 IPv4/IPv6 Happy Eyeballs，学校接口 / DeepL / 百度 / 有道开箱即用）；**中文字体随包内置**；支持本地端口 `127.0.0.1:23129` 与浏览器插件秒级联动。
-
-### 2. 知网 / 学术站一键入库扩展（PaperBridge Connector）
-1. 在 [GitHub Releases](https://github.com/royhang/PaperBridge/releases) 下载 `PaperBridge-Connector-<版本>.zip` 并解压（或直接加载仓库 `extension/` 目录）。
-2. 在 Chrome / Edge 打开 `chrome://extensions` 开启「开发者模式」，点击「加载已解压的扩展程序」。
-3. 在知网、arXiv、IEEE 等论文页面点击插件图标，即可像 Zotero Connector 一样选分类、打标签并一键入库。
-
-### 3. iPadOS 全屏阅读与 Apple Pencil 手写
-1. 在 iPad Safari 打开你部署的 PaperBridge 地址（或 GitHub Pages），点击「分享 → 添加到主屏幕」。
-2. 登录「云同步」账号即可自动拉取电脑端全部文献、PDF、翻译缓存与加密 API 配置。
-3. 点击工具栏画笔按钮开启手写模式（默认开启 **「仅 Pencil 防误触」**，手掌与手指可自由滚动/双指缩放，Apple Pencil 在**原文页和译文页**上均可独立书写批注）。
-
-### 4. 本地开发与自托管部署
+## 本地开发与测试
 
 ```bash
 pnpm install
 pnpm dev          # 本地开发 http://localhost:5173
 pnpm build        # 构建静态站点到 dist/
-pnpm proxy        # 启动跨域代理（默认 127.0.0.1:8787）
-pnpm sync         # 启动零依赖多端云同步服务（默认 127.0.0.1:8788）
-pnpm desktop:win  # 打包 Windows 便携版 → desktop/release/
-```
+pnpm proxy        # 单独启动跨域代理（127.0.0.1:8787）
+pnpm sync         # 单独启动云同步服务（127.0.0.1:8788）
+pnpm desktop:win  # 打包 Windows 免安装版 → desktop/release/
 
----
-
-## 隐私与数据归属
-
-- **本地优先**：PDF 原文件、题录、笔记、手写笔迹与翻译缓存默认存储在本地浏览器 / 桌面端 IndexedDB 中，完全离线可读。
-- **端到端加密云同步**：仅在你主动登录自托管云同步服务时才同步到你的服务器（`/var/lib/paperbridge-sync/`）；API Key 在上传前使用你的账号密码在本地通过 PBKDF2 + AES-256-GCM 加密，服务端不保存任何明文 Key。
-
----
-
-## 开发与测试
-
-```bash
-pnpm test         # 全量单元测试（PDF 排版引擎、文献库、手写图层、知网解析、适配器等）
+pnpm test         # 全量单元测试
 pnpm test:proxy   # 跨域代理测试
-pnpm test:sync    # 增量云同步 + Gzip + 权限隔离测试
+pnpm test:sync    # 增量云同步 + Gzip + 隔离测试
+pnpm test:docker  # All-in-One Docker 服务冒烟测试
 pnpm lint         # oxlint 静态检查
 ```
 

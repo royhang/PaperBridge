@@ -1491,7 +1491,7 @@ export async function buildTranslatedPdf(opts: PdfTranslateOptions): Promise<Pdf
       say(`翻译 ${done}/${all.length} 段`, 0.05 + 0.75 * (done / all.length));
     }
   };
-  await Promise.all(Array.from({ length: Math.max(1, s.concurrency) }, worker));
+  await Promise.all(Array.from({ length: Math.max(1, Math.min(3, s.concurrency)) }, worker));
   throwIfAborted(opts.signal);
   say('校验译文…', 0.82);
   // all pages at once: the shared request slots (services/limiter.ts) keep the total within the cap

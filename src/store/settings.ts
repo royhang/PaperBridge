@@ -3,8 +3,12 @@ import { persist } from 'zustand/middleware';
 import type { LangCode, ProviderConfig } from '../providers/types';
 
 export type Theme = 'system' | 'light' | 'dark';
+export type PdfTheme = 'auto' | 'original' | 'dim' | 'dark';
 export type SelectionAction = 'popup' | 'auto-translate' | 'none';
 export type TagColor = 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple';
+
+export const MAX_CONCURRENCY = 3;
+export const clampConcurrency = (n: number | undefined) => Math.max(1, Math.min(MAX_CONCURRENCY, Math.round(Number(n) || MAX_CONCURRENCY)));
 
 export const TAG_COLORS: { id: TagColor; hex: string; label: string }[] = [
   { id: 'red', hex: '#ef4444', label: '红（精读核心）' },
@@ -56,7 +60,9 @@ export interface Settings {
   proxyToken: string;
   selectionAction: SelectionAction;
   theme: Theme;
-  /** Max parallel requests during full-text translation. */
+  /** PDF page rendering color mode: auto (night-paper in dark mode), original (pure white), dim (warm eye-comfort), dark (inverted night paper). */
+  pdfTheme: PdfTheme;
+  /** Max parallel requests during full-text translation (capped at 3). */
   concurrency: number;
   /** Paragraphs per LLM request in full-text mode. */
   batchSize: number;
@@ -96,13 +102,15 @@ export const useSettings = create<SettingsStore>()(
       proxyToken: '',
       selectionAction: 'popup',
       theme: 'system',
-      concurrency: 5,
+      pdfTheme: 'auto',
+      concurrency: 3,
       batchSize: 6,
       prompts: DEFAULT_PROMPTS,
       readerFontSize: 15,
       autoTerms: true,
       tagColors: {},
-      set: (patch) => set(patch),
+      set: (patch) =>
+        set(patch.concurrency !== undefined ? { ...patch, concurrency: clampConcurrency(patch.concurrency) } : patch),
       setTagColor: (tag, color) =>
         set((s) => {
           const next = { ...(s.tagColors ?? {}) };
@@ -133,7 +141,13 @@ export const useSettings = create<SettingsStore>()(
       version: 1,
       merge: (persisted, current) => {
         const p = (persisted ?? {}) as Partial<Settings>;
-        return { ...current, ...p, prompts: { ...DEFAULT_PROMPTS, ...(p.prompts ?? {}) } };
+        return {
+          ...current,
+          ...p,
+          concurrency: clampConcurrency(p.concurrency ?? current.concurrency),
+          pdfTheme: p.pdfTheme ?? current.pdfTheme,
+          prompts: { ...DEFAULT_PROMPTS, ...(p.prompts ?? {}) },
+        };
       },
     },
   ),

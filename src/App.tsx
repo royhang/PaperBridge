@@ -37,6 +37,7 @@ export default function App() {
   const lastDocId = useTabs((s) => s.lastDocId);
   const focusMode = useReader((s) => s.focusMode);
   const theme = useSettings((s) => s.theme);
+  const pdfTheme = useSettings((s) => s.pdfTheme);
   const fontSize = useSettings((s) => s.readerFontSize);
   const [settingsOpen, setSettingsOpen] = useState<SettingsSection | null>(null);
 
@@ -54,16 +55,25 @@ export default function App() {
     const el = document.documentElement;
     if (theme === 'system') el.removeAttribute('data-theme');
     else el.setAttribute('data-theme', theme);
-    // Keep iPadOS / iOS / Android status bar seamlessly matched to the app chrome color
-    const dark = theme === 'dark' || (theme === 'system' && window.matchMedia?.('(prefers-color-scheme: dark)').matches);
-    const chromeColor = dark ? '#14161a' : '#eaedf2';
-    document.querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]').forEach((m) => {
-      if (theme !== 'system') {
-        m.removeAttribute('media');
-        m.content = chromeColor;
-      }
-    });
-  }, [theme]);
+    const mq = window.matchMedia?.('(prefers-color-scheme: dark)');
+    const applyDerived = () => {
+      const dark = theme === 'dark' || (theme === 'system' && !!mq?.matches);
+      // Dark mode automatically applies eye-comfort night paper to PDFs unless user overrides
+      const resolvedPdf = pdfTheme === 'auto' ? (dark ? 'dark' : 'original') : pdfTheme;
+      el.setAttribute('data-pdf-theme', resolvedPdf);
+      // Keep iPadOS / iOS / Android status bar seamlessly matched to the app chrome color
+      const chromeColor = dark ? '#14161a' : '#eaedf2';
+      document.querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]').forEach((m) => {
+        if (theme !== 'system') {
+          m.removeAttribute('media');
+          m.content = chromeColor;
+        }
+      });
+    };
+    applyDerived();
+    mq?.addEventListener?.('change', applyDerived);
+    return () => mq?.removeEventListener?.('change', applyDerived);
+  }, [theme, pdfTheme]);
 
   useEffect(() => {
     document.documentElement.style.setProperty('--reader-font', `${fontSize}px`);

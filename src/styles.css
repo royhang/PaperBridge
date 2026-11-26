@@ -2721,6 +2721,33 @@ a {
   opacity: 0.34;
   mix-blend-mode: multiply;
 }
+
+/* Eye-comfort PDF page themes (never blinding pure white in dark mode) */
+:root[data-pdf-theme='dark'] .page {
+  background: #1d2026;
+  box-shadow: 0 2px 14px rgba(0, 0, 0, 0.55);
+}
+:root[data-pdf-theme='dark'] .page-canvas {
+  filter: invert(0.885) hue-rotate(180deg) contrast(0.96);
+}
+:root[data-pdf-theme='dark'] .ink-hl-group {
+  mix-blend-mode: screen;
+  opacity: 0.36;
+}
+:root[data-pdf-theme='dark'] .hl {
+  mix-blend-mode: screen;
+  opacity: 0.72;
+}
+:root[data-pdf-theme='dark'] .trans-status {
+  background: repeating-linear-gradient(180deg, #1d2026 0 22px, #232730 22px 23px);
+  color: #9aa3b2;
+}
+:root[data-pdf-theme='dim'] .page {
+  background: #dcd7cc;
+}
+:root[data-pdf-theme='dim'] .page-canvas {
+  filter: brightness(0.86) contrast(0.95) sepia(0.1);
+}
 @media (pointer: coarse) {
   .ink-dot {
     width: 26px;

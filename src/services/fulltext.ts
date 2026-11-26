@@ -408,7 +408,7 @@ export async function runFullText(range?: { from: number; to: number }) {
         pageProgress(plan);
         // while the queue is short (the first page, "仅本页") a page is split so every request slot has work —
         // requests are output-bound, so three small batches finish about three times sooner than one big one
-        const conc = Math.max(1, s.concurrency);
+        const conc = Math.max(1, Math.min(3, s.concurrency));
         const size = queue.length < conc ? Math.max(1, Math.min(s.batchSize, Math.ceil(todo.length / conc))) : Math.max(1, s.batchSize);
         queue.push(...makeBatches(todo, size));
       }
@@ -453,7 +453,7 @@ export async function runFullText(range?: { from: number; to: number }) {
     }
   };
 
-  const tasks = [produce(), ...Array.from({ length: Math.max(1, s.concurrency) }, worker)];
+  const tasks = [produce(), ...Array.from({ length: Math.max(1, Math.min(3, s.concurrency)) }, worker)];
   try {
     await Promise.all(tasks);
   } catch (e) {

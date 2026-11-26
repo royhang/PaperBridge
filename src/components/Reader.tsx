@@ -170,6 +170,8 @@ function Toolbar({ active }: { active: boolean }) {
   const setInkTool = useReader((s) => s.setInkTool);
   const focusMode = useReader((s) => s.focusMode);
   const toggleFocusMode = useReader((s) => s.toggleFocusMode);
+  const pdfTheme = useSettings((s) => s.pdfTheme);
+  const setSettings = useSettings((s) => s.set);
   const pagesDone = useReader((s) => Object.values(s.pageStates).filter((p) => p.status === 'done' || p.status === 'skipped').length);
   const running = useReader((s) => s.fullTextRunning);
   const [pageInput, setPageInput] = useState('');
@@ -302,6 +304,25 @@ function Toolbar({ active }: { active: boolean }) {
         onClick={() => setInkTool(inkTool === 'none' ? 'pen' : 'none')}
       >
         <Icon name="edit" size={16} />
+      </button>
+      <button
+        className={`icon-btn${pdfTheme !== 'original' ? ' active' : ''}`}
+        title={
+          pdfTheme === 'auto'
+            ? 'PDF 纸色：自动护眼（深色模式暗夜纸张，点击切换为柔光暖纸）'
+            : pdfTheme === 'dim'
+              ? 'PDF 纸色：柔光暖纸（不反色保留照片原色，点击切换为深色反色）'
+              : pdfTheme === 'dark'
+                ? 'PDF 纸色：暗夜反色（点击切换为原始白底）'
+                : 'PDF 纸色：原始白底（点击恢复自动护眼）'
+        }
+        onClick={() => {
+          const order = ['auto', 'dim', 'dark', 'original'] as const;
+          const next = order[(order.indexOf(pdfTheme) + 1) % order.length];
+          setSettings({ pdfTheme: next });
+        }}
+      >
+        <Icon name={pdfTheme === 'original' ? 'sun' : 'moon'} size={15} />
       </button>
       <button
         className={`icon-btn${focusMode ? ' active' : ''}`}

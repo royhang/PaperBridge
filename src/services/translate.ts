@@ -104,7 +104,7 @@ export interface TranslateOpts {
 }
 
 /** Shared cap on bulk translation requests (see limiter.ts). */
-export const bulkSlots = createLimiter(() => getSettings().concurrency);
+export const bulkSlots = createLimiter(() => Math.max(1, Math.min(3, getSettings().concurrency)));
 const inSlot = <T>(opts: TranslateOpts, fn: () => Promise<T>): Promise<T> => (opts.bulk === false ? fn() : bulkSlots.run(fn, opts.urgent, opts.signal));
 
 /**

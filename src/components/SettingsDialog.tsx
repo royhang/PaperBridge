@@ -1292,19 +1292,30 @@ function TranslateSection() {
           </select>
         </div>
       </div>
-      <div className="field">
-        <label>选中文字后</label>
-        <select className="select" value={s.selectionAction} onChange={(e) => s.set({ selectionAction: e.target.value as typeof s.selectionAction })}>
-          <option value="popup">显示浮动工具栏</option>
-          <option value="auto-translate">立即翻译（同时显示工具栏）</option>
-          <option value="none">不做任何事</option>
-        </select>
+      <div className="grid2">
+        <div className="field">
+          <label>选中文字后</label>
+          <select className="select" value={s.selectionAction} onChange={(e) => s.set({ selectionAction: e.target.value as typeof s.selectionAction })}>
+            <option value="popup">显示浮动工具栏</option>
+            <option value="auto-translate">立即翻译（同时显示工具栏）</option>
+            <option value="none">不做任何事</option>
+          </select>
+        </div>
+        <div className="field">
+          <label>PDF 纸张护眼模式</label>
+          <select className="select" value={s.pdfTheme ?? 'auto'} onChange={(e) => s.set({ pdfTheme: e.target.value as typeof s.pdfTheme })}>
+            <option value="auto">跟随深浅主题（黑夜自动暗夜护眼）</option>
+            <option value="dim">柔光暖纸（保留原图色彩不刺眼）</option>
+            <option value="dark">始终暗夜护眼（柔和深底浅字）</option>
+            <option value="original">始终原始纯白</option>
+          </select>
+        </div>
       </div>
       <div className="grid2">
         <div className="field">
           <label>全文翻译并发数：{s.concurrency}</label>
-          <input type="range" min={1} max={10} value={s.concurrency} onChange={(e) => s.set({ concurrency: Number(e.target.value) })} />
-          <div className="hint">同时发出的翻译请求数（含校验重译），越高越快；遇到 429 时调低</div>
+          <input type="range" min={1} max={3} value={Math.min(3, s.concurrency)} onChange={(e) => s.set({ concurrency: Number(e.target.value) })} />
+          <div className="hint">同时发出的翻译请求数（上限 3，避免触发接口 429 限流）</div>
         </div>
         <div className="field">
           <label>每次请求的段落数：{s.batchSize}</label>
