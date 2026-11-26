@@ -113,6 +113,22 @@ export interface ChatRecord {
   updatedAt: number;
 }
 
+/** Normalized point [x (0..1), y (0..1), pressure (0..1)] for Apple Pencil / stylus ink. */
+export type InkPoint = [number, number, number];
+export type InkKind = 'pen' | 'highlighter';
+
+export interface InkStroke {
+  id: string;
+  docId: string;
+  pageIndex: number;
+  kind: InkKind;
+  color: string;
+  /** Stroke width in PDF page points at scale = 1 (scales cleanly with zoom). */
+  width: number;
+  points: InkPoint[];
+  createdAt: number;
+}
+
 export class PaperDB extends Dexie {
   docs!: EntityTable<DocRecord, 'id'>;
   blobs!: EntityTable<DocBlob, 'id'>;
@@ -120,6 +136,7 @@ export class PaperDB extends Dexie {
   paragraphs!: EntityTable<ParagraphCache, 'key'>;
   glossary!: EntityTable<GlossaryEntry, 'id'>;
   notes!: EntityTable<NoteRecord, 'id'>;
+  inks!: EntityTable<InkStroke, 'id'>;
   chats!: EntityTable<ChatRecord, 'id'>;
   collections!: EntityTable<Collection, 'id'>;
   doctext!: EntityTable<DocText, 'docId'>;
@@ -156,6 +173,9 @@ export class PaperDB extends Dexie {
             d.updatedAt ??= d.addedAt;
           }),
       );
+    this.version(3).stores({
+      inks: 'id, docId, [docId+pageIndex]',
+    });
   }
 }
 
@@ -171,13 +191,14 @@ export async function sha256Hex(data: ArrayBuffer | string): Promise<string> {
 }
 
 export async function deleteDocument(docId: string) {
-  await db.transaction('rw', [db.docs, db.blobs, db.translations, db.paragraphs, db.notes, db.chats, db.glossary, db.doctext], async () => {
+  await db.transaction('rw', [db.docs, db.blobs, db.translations, db.paragraphs, db.notes, db.inks, db.chats, db.glossary, db.doctext], async () => {
     await db.doctext.delete(docId);
     await db.docs.delete(docId);
     await db.blobs.delete(docId);
     await db.translations.where('docId').equals(docId).delete();
     await db.paragraphs.where('docId').equals(docId).delete();
     await db.notes.where('docId').equals(docId).delete();
+    await db.inks.where('docId').equals(docId).delete();
     await db.chats.where('docId').equals(docId).delete();
     await db.glossary.where('scope').equals(docId).delete();
   });

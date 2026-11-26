@@ -1,4 +1,4 @@
-import { db, type ChatRecord, type Collection, type DocRecord, type GlossaryEntry, type NoteRecord, type TranslationRecord } from '../db/db';
+import { db, type ChatRecord, type Collection, type DocRecord, type GlossaryEntry, type InkStroke, type NoteRecord, type TranslationRecord } from '../db/db';
 import { desktop } from '../lib/desktop';
 import { useSettings, type Settings } from '../store/settings';
 import { emptyTombstones, useSync, type TombstoneMap, type TombstoneTable } from '../store/sync';
@@ -161,6 +161,7 @@ interface RemoteState {
   docs: Record<string, DocRecord>;
   collections: Record<string, Collection>;
   notes: Record<string, NoteRecord>;
+  inks?: Record<string, InkStroke>;
   glossary: Record<string, GlossaryEntry>;
   chats: Record<string, ChatRecord>;
   translations: Record<string, TranslationRecord>;
@@ -216,10 +217,11 @@ export async function syncNow(): Promise<boolean> {
     const sync = useSync.getState();
     sync.set({ status: 'syncing', progress: '合并数据…', lastError: '' });
     try {
-      const [docs, collections, notes, glossary, chats, translations] = await Promise.all([
+      const [docs, collections, notes, inks, glossary, chats, translations] = await Promise.all([
         db.docs.toArray(),
         db.collections.toArray(),
         db.notes.toArray(),
+        db.inks.toArray(),
         db.glossary.toArray(),
         db.chats.toArray(),
         db.translations.toArray(),
@@ -247,6 +249,7 @@ export async function syncNow(): Promise<boolean> {
             docs: indexBy(docs, (d) => d.id),
             collections: indexBy(collections, (c) => c.id),
             notes: indexBy(notes, (n) => n.id),
+            inks: indexBy(inks, (s) => s.id),
             glossary: indexBy(glossary, (g) => g.id),
             chats: indexBy(chats, (c) => c.id),
             translations: indexBy(translations, (t) => t.key),
@@ -262,9 +265,9 @@ export async function syncNow(): Promise<boolean> {
       suppressHooks = true;
       try {
         const remote = res.state;
-        const del = remote.deleted ?? emptyTombstones();
+        const del = { ...emptyTombstones(), ...(remote.deleted ?? {}) };
 
-        await db.transaction('rw', [db.docs, db.blobs, db.collections, db.notes, db.glossary, db.chats, db.translations], async () => {
+        await db.transaction('rw', [db.docs, db.blobs, db.collections, db.notes, db.inks, db.glossary, db.chats, db.translations], async () => {
           // Delete locally removed/tombstoned items
           for (const id of Object.keys(del.docs ?? {})) {
             if (!remote.docs[id]) {
@@ -274,6 +277,7 @@ export async function syncNow(): Promise<boolean> {
           }
           for (const id of Object.keys(del.collections ?? {})) if (!remote.collections[id]) await db.collections.delete(id);
           for (const id of Object.keys(del.notes ?? {})) if (!remote.notes[id]) await db.notes.delete(id);
+          for (const id of Object.keys(del.inks ?? {})) if (!remote.inks?.[id]) await db.inks.delete(id);
           for (const id of Object.keys(del.glossary ?? {})) if (!remote.glossary[id]) await db.glossary.delete(id);
           for (const id of Object.keys(del.chats ?? {})) if (!remote.chats[id]) await db.chats.delete(id);
 
@@ -281,6 +285,7 @@ export async function syncNow(): Promise<boolean> {
           const rDocs = Object.values(remote.docs ?? {});
           const rCols = Object.values(remote.collections ?? {});
           const rNotes = Object.values(remote.notes ?? {});
+          const rInks = Object.values(remote.inks ?? {});
           const rGlos = Object.values(remote.glossary ?? {});
           const rChats = Object.values(remote.chats ?? {});
           const rTrans = Object.values(remote.translations ?? {});
@@ -288,6 +293,7 @@ export async function syncNow(): Promise<boolean> {
           if (rDocs.length) await db.docs.bulkPut(rDocs);
           if (rCols.length) await db.collections.bulkPut(rCols);
           if (rNotes.length) await db.notes.bulkPut(rNotes);
+          if (rInks.length) await db.inks.bulkPut(rInks);
           if (rGlos.length) await db.glossary.bulkPut(rGlos);
           if (rChats.length) await db.chats.bulkPut(rChats);
           if (rTrans.length) await db.translations.bulkPut(rTrans);
@@ -402,7 +408,7 @@ export function initAutoSync() {
   if (autoInit) return;
   autoInit = true;
 
-  const tables: TombstoneTable[] = ['docs', 'collections', 'notes', 'glossary', 'chats'];
+  const tables: TombstoneTable[] = ['docs', 'collections', 'notes', 'inks', 'glossary', 'chats'];
   for (const name of tables) {
     const tbl = db[name];
     tbl.hook('deleting', (primKey) => {

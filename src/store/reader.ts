@@ -4,6 +4,7 @@ import type { NRect } from '../db/db';
 import type { ReaderSnapshot } from './tabs';
 
 export type SideTab = 'translate' | 'parallel' | 'chat' | 'notes' | 'glossary';
+export type InkTool = 'none' | 'pen' | 'highlighter' | 'eraser';
 
 export interface SelectionInfo {
   text: string;
@@ -78,7 +79,19 @@ interface ReaderStore {
   viewMode: ViewMode;
   /** Text handed from the selection toolbar to the glossary / chat panels. */
   handoff: { target: 'glossary' | 'chat'; text: string; nonce: number } | null;
+  /** Apple Pencil / stylus freehand annotation tool state. */
+  inkTool: InkTool;
+  penColor: string;
+  hlColor: string;
+  penWidth: number;
+  /** Palm rejection: on touch/iPadOS, only Apple Pencil (`pointerType === 'pen'`) draws while fingers scroll/pinch. */
+  pencilOnly: boolean;
 
+  setInkTool: (t: InkTool) => void;
+  setPenColor: (c: string) => void;
+  setHlColor: (c: string) => void;
+  setPenWidth: (w: number) => void;
+  setPencilOnly: (b: boolean) => void;
   handoffTo: (target: 'glossary' | 'chat', text: string, pin?: PinnedSelection) => void;
   consumeHandoff: () => void;
   open: (docId: string, title: string, pdf: PDFDocumentProxy, page: number, snapshot?: ReaderSnapshot) => void;
@@ -122,6 +135,17 @@ export const useReader = create<ReaderStore>()((set) => ({
   pageStates: {},
   viewMode: 'original',
   handoff: null,
+  inkTool: 'none',
+  penColor: '#e11d48',
+  hlColor: '#facc15',
+  penWidth: 2.2,
+  pencilOnly: typeof window !== 'undefined' && !!window.matchMedia?.('(pointer: coarse)').matches,
+
+  setInkTool: (inkTool) => set({ inkTool, selection: null }),
+  setPenColor: (penColor) => set({ penColor }),
+  setHlColor: (hlColor) => set({ hlColor }),
+  setPenWidth: (penWidth) => set({ penWidth }),
+  setPencilOnly: (pencilOnly) => set({ pencilOnly }),
 
   handoffTo: (target, text, pin) =>
     set((s) => ({

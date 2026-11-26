@@ -138,6 +138,7 @@ export function Reader({ docId, active = true }: { docId: string; active?: boole
   return (
     <div className="reader">
       <Toolbar active={active} />
+      <InkToolbar docId={docId} />
       <div className="reader-body">
         {pdf ? <PdfView /> : <div className="viewer" style={{ display: 'grid', placeItems: 'center' }}><span className="spinner" /></div>}
         <SidePanel />
@@ -158,6 +159,8 @@ function Toolbar({ active }: { active: boolean }) {
   const toggleSide = useReader((s) => s.toggleSide);
   const viewMode = useReader((s) => s.viewMode);
   const setViewMode = useReader((s) => s.setViewMode);
+  const inkTool = useReader((s) => s.inkTool);
+  const setInkTool = useReader((s) => s.setInkTool);
   const pagesDone = useReader((s) => Object.values(s.pageStates).filter((p) => p.status === 'done' || p.status === 'skipped').length);
   const running = useReader((s) => s.fullTextRunning);
   const [pageInput, setPageInput] = useState('');
@@ -272,12 +275,139 @@ function Toolbar({ active }: { active: boolean }) {
           </button>
         ))}
       </div>
+      <button
+        className={`icon-btn${inkTool !== 'none' ? ' active' : ''}`}
+        title="手写批注（支持 Apple Pencil 压感与防手掌误触）"
+        onClick={() => setInkTool(inkTool === 'none' ? 'pen' : 'none')}
+      >
+        <Icon name="edit" size={16} />
+      </button>
       <button className="icon-btn" title="导出译文 PDF（保留原排版）" disabled={!pdf} onClick={() => setExporting(true)}>
         <Icon name="download" size={16} />
       </button>
       {exporting && <PdfExportDialog onClose={() => setExporting(false)} />}
       <button className={`icon-btn${sideOpen ? ' active' : ''}`} title="右侧工具栏" onClick={toggleSide}>
         <Icon name="sidebar" size={16} />
+      </button>
+    </div>
+  );
+}
+
+const PEN_COLORS = [
+  { hex: '#e11d48', label: '红笔' },
+  { hex: '#2563eb', label: '蓝笔' },
+  { hex: '#111827', label: '黑笔' },
+  { hex: '#16a34a', label: '绿笔' },
+  { hex: '#9333ea', label: '紫笔' },
+];
+
+const HL_COLORS = [
+  { hex: '#facc15', label: '黄荧光' },
+  { hex: '#4ade80', label: '绿荧光' },
+  { hex: '#60a5fa', label: '蓝荧光' },
+  { hex: '#f472b6', label: '粉荧光' },
+];
+
+const PEN_WIDTHS = [
+  { v: 1.5, label: '细' },
+  { v: 2.2, label: '中' },
+  { v: 3.6, label: '粗' },
+];
+
+function InkToolbar({ docId }: { docId: string }) {
+  const inkTool = useReader((s) => s.inkTool);
+  const setInkTool = useReader((s) => s.setInkTool);
+  const penColor = useReader((s) => s.penColor);
+  const setPenColor = useReader((s) => s.setPenColor);
+  const hlColor = useReader((s) => s.hlColor);
+  const setHlColor = useReader((s) => s.setHlColor);
+  const penWidth = useReader((s) => s.penWidth);
+  const setPenWidth = useReader((s) => s.setPenWidth);
+  const pencilOnly = useReader((s) => s.pencilOnly);
+  const setPencilOnly = useReader((s) => s.setPencilOnly);
+  const currentPage = useReader((s) => s.currentPage);
+
+  if (inkTool === 'none') return null;
+
+  const undoLast = async () => {
+    const rows = await db.inks.where('[docId+pageIndex]').equals([docId, currentPage]).sortBy('createdAt');
+    const last = rows[rows.length - 1];
+    if (last) await db.inks.delete(last.id);
+  };
+
+  const clearPage = async () => {
+    const rows = await db.inks.where('[docId+pageIndex]').equals([docId, currentPage]).toArray();
+    if (!rows.length) return;
+    if (!confirm(`清空第 ${currentPage + 1} 页的全部 ${rows.length} 条手写笔迹？`)) return;
+    await db.inks.where('[docId+pageIndex]').equals([docId, currentPage]).delete();
+  };
+
+  const palette = inkTool === 'highlighter' ? HL_COLORS : PEN_COLORS;
+  const activeColor = inkTool === 'highlighter' ? hlColor : penColor;
+  const pickColor = inkTool === 'highlighter' ? setHlColor : setPenColor;
+
+  return (
+    <div className="ink-bar" role="toolbar" aria-label="手写批注工具栏">
+      <div className="filter-group">
+        <button className={`filter-pill${inkTool === 'pen' ? ' active' : ''}`} onClick={() => setInkTool('pen')}>
+          <Icon name="edit" size={13} /> 钢笔
+        </button>
+        <button className={`filter-pill${inkTool === 'highlighter' ? ' active' : ''}`} onClick={() => setInkTool('highlighter')}>
+          <Icon name="highlight" size={13} /> 荧光笔
+        </button>
+        <button className={`filter-pill${inkTool === 'eraser' ? ' active' : ''}`} onClick={() => setInkTool('eraser')}>
+          <Icon name="eraser" size={13} /> 橡皮
+        </button>
+      </div>
+
+      {inkTool !== 'eraser' && (
+        <>
+          <span className="filter-sep" />
+          <div className="row" style={{ gap: 5 }}>
+            {palette.map((c) => (
+              <button
+                key={c.hex}
+                className={`ink-dot${activeColor === c.hex ? ' active' : ''}`}
+                style={{ background: c.hex }}
+                title={c.label}
+                onClick={() => pickColor(c.hex)}
+              />
+            ))}
+          </div>
+        </>
+      )}
+
+      {inkTool === 'pen' && (
+        <>
+          <span className="filter-sep" />
+          <div className="filter-group">
+            {PEN_WIDTHS.map((w) => (
+              <button key={w.v} className={`filter-pill${penWidth === w.v ? ' active' : ''}`} onClick={() => setPenWidth(w.v)}>
+                {w.label}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+
+      <span className="filter-sep" />
+      <button
+        className={`filter-pill${pencilOnly ? ' active' : ''}`}
+        title="开启后仅 Apple Pencil 落笔书写，手掌和手指可自由翻页缩放（防误触）"
+        onClick={() => setPencilOnly(!pencilOnly)}
+      >
+        {pencilOnly ? '✓ 仅 Pencil（防误触）' : '手指/鼠标可写'}
+      </button>
+
+      <div className="spacer" />
+      <button className="btn ghost sm" title="撤销当前页最后一笔" onClick={() => void undoLast()}>
+        <Icon name="undo" size={13} /> 撤销
+      </button>
+      <button className="btn ghost sm" title="清空当前页手写笔迹" onClick={() => void clearPage()}>
+        清空本页
+      </button>
+      <button className="icon-btn sm-ico" title="退出手写模式（恢复划词翻译）" onClick={() => setInkTool('none')}>
+        <Icon name="close" size={14} />
       </button>
     </div>
   );

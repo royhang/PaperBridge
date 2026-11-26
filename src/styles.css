@@ -2657,3 +2657,62 @@ a {
     top: calc(90px + env(safe-area-inset-top, 0px));
   }
 }
+
+/* ---------- Apple Pencil / Freehand Ink Annotation Layer ---------- */
+.ink-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 5px 12px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--accent-soft) 45%, var(--bg-elev));
+  flex: none;
+  z-index: 15;
+}
+.ink-dot {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  cursor: pointer;
+  padding: 0;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.16);
+}
+.ink-dot.active {
+  border-color: var(--fg);
+  transform: scale(1.12);
+}
+.ink-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 12;
+  pointer-events: none;
+  overflow: visible;
+}
+.ink-layer.active {
+  pointer-events: auto;
+  cursor: crosshair;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  /* In Pencil-only palm-rejection mode, fingers still scroll & pinch natively while stylus touchstart is preventDefault'd */
+  touch-action: pan-x pan-y pinch-zoom;
+}
+.ink-layer.active.lock-touch {
+  /* In finger-drawing mode, lock single-finger panning (pinch still works via 2-touch) */
+  touch-action: none;
+}
+.ink-layer.active.eraser {
+  cursor: cell;
+}
+.ink-hl-group {
+  opacity: 0.34;
+  mix-blend-mode: multiply;
+}
+@media (pointer: coarse) {
+  .ink-dot {
+    width: 26px;
+    height: 26px;
+  }
+}

@@ -1,12 +1,12 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 
-export type TombstoneTable = 'docs' | 'collections' | 'notes' | 'glossary' | 'chats';
+export type TombstoneTable = 'docs' | 'collections' | 'notes' | 'inks' | 'glossary' | 'chats';
 
 export type TombstoneMap = Record<TombstoneTable, Record<string, number>>;
 
 export function emptyTombstones(): TombstoneMap {
-  return { docs: {}, collections: {}, notes: {}, glossary: {}, chats: {} };
+  return { docs: {}, collections: {}, notes: {}, inks: {}, glossary: {}, chats: {} };
 }
 
 export function defaultSyncServerUrl(): string {
@@ -92,6 +92,14 @@ export const useSync = create<SyncStore>()(
         lastRevision: s.lastRevision,
         tombstones: s.tombstones,
       }),
+      merge: (persisted, current) => {
+        const p = (persisted ?? {}) as Partial<SyncStore>;
+        return {
+          ...current,
+          ...p,
+          tombstones: { ...emptyTombstones(), ...(p.tombstones ?? {}) },
+        };
+      },
     },
   ),
 );

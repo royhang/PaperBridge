@@ -59,11 +59,12 @@ function emptyState() {
     docs: {},
     collections: {},
     notes: {},
+    inks: {},
     glossary: {},
     chats: {},
     translations: {},
     settings: null,
-    deleted: { docs: {}, collections: {}, notes: {}, glossary: {}, chats: {} },
+    deleted: { docs: {}, collections: {}, notes: {}, inks: {}, glossary: {}, chats: {} },
   };
 }
 
@@ -94,6 +95,7 @@ function mergeStates(serverState, payload) {
   const docs = mergeTable(serverState.docs, payload.docs, serverState.deleted?.docs, payload.deleted?.docs, (d) => Number(d.updatedAt ?? d.addedAt ?? 0));
   const collections = mergeTable(serverState.collections, payload.collections, serverState.deleted?.collections, payload.deleted?.collections, (c) => Number(c.updatedAt ?? c.createdAt ?? 0));
   const notes = mergeTable(serverState.notes, payload.notes, serverState.deleted?.notes, payload.deleted?.notes, (n) => Number(n.createdAt ?? 0));
+  const inks = mergeTable(serverState.inks, payload.inks, serverState.deleted?.inks, payload.deleted?.inks, (s) => Number(s.createdAt ?? 0));
   const glossary = mergeTable(serverState.glossary, payload.glossary, serverState.deleted?.glossary, payload.deleted?.glossary, (g) => Number(g.createdAt ?? 0));
   const chats = mergeTable(serverState.chats, payload.chats, serverState.deleted?.chats, payload.deleted?.chats, (c) => Number(c.updatedAt ?? 0));
 
@@ -116,6 +118,7 @@ function mergeStates(serverState, payload) {
   next.docs = docs.merged;
   next.collections = collections.merged;
   next.notes = notes.merged;
+  next.inks = inks.merged;
   next.glossary = glossary.merged;
   next.chats = chats.merged;
   next.translations = translations;
@@ -124,6 +127,7 @@ function mergeStates(serverState, payload) {
     docs: docs.deleted,
     collections: collections.deleted,
     notes: notes.deleted,
+    inks: inks.deleted,
     glossary: glossary.deleted,
     chats: chats.deleted,
   };

@@ -1,12 +1,13 @@
 import { useLiveQuery } from 'dexie-react-hooks';
 import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { db, type NoteRecord, type NRect } from '../db/db';
+import { db, type InkStroke, type NoteRecord, type NRect } from '../db/db';
 import { openPdf, pdfjs, sharedWorker, type PDFDocumentProxy } from '../pdf/loader';
 import { hydratePageFromCache, pageParagraphs, runFullText } from '../services/fulltext';
 import type { Paragraph } from '../pdf/types';
 import { useReader } from '../store/reader';
 import { useSettings } from '../store/settings';
 import { cleanSelectedText } from '../lib/text';
+import { InkLayer } from './InkLayer';
 
 interface Size {
   w: number;
@@ -58,6 +59,7 @@ export function PdfView() {
   }, [pdf]);
 
   const notes = useLiveQuery(() => db.notes.where('docId').equals(docId).toArray(), [docId]);
+  const inks = useLiveQuery(() => db.inks.where('docId').equals(docId).toArray(), [docId]);
 
   // ---- current page tracking
   const onScroll = useCallback(() => {
@@ -179,6 +181,7 @@ export function PdfView() {
   // ---- text selection → floating toolbar (mouse + iPadOS touch / Apple Pencil selectionchange)
   const readSelection = useCallback(
     (triggerAuto = true) => {
+      if (useReader.getState().inkTool !== 'none') return;
       const sel = window.getSelection();
       if (!sel || sel.isCollapsed || sel.rangeCount === 0) {
         setSelection(null);
@@ -290,6 +293,7 @@ export function PdfView() {
                 docId={docId}
                 container={containerRef}
                 notes={notes?.filter((n) => n.pageIndex === i)}
+                inks={inks?.filter((s) => s.pageIndex === i)}
               />
             )}
             {viewMode !== 'original' && <TransPageView index={i} size={sz} scale={scale} pdf={pdf} container={containerRef} />}
@@ -326,10 +330,11 @@ interface PageProps {
   docId: string;
   container: React.RefObject<HTMLDivElement | null>;
   notes?: NoteRecord[];
+  inks?: InkStroke[];
   ref?: React.Ref<HTMLDivElement>;
 }
 
-const PageView = memo(function PageView({ index, size, scale, pdf, docId, container, notes, ref }: PageProps) {
+const PageView = memo(function PageView({ index, size, scale, pdf, docId, container, notes, inks, ref }: PageProps) {
   const holderRef = useRef<HTMLDivElement | null>(null);
   const canvasHolder = useRef<HTMLDivElement>(null);
   const textRef = useRef<HTMLDivElement>(null);
@@ -446,6 +451,7 @@ const PageView = memo(function PageView({ index, size, scale, pdf, docId, contai
       )}
       <PinnedSelectionLayer index={index} />
       <div ref={textRef} />
+      <InkLayer docId={docId} pageIndex={index} width={w} height={h} scale={scale} strokes={inks} />
       {visible && <ParagraphLayer pdf={pdf} docId={docId} index={index} scale={scale} />}
     </div>
   );

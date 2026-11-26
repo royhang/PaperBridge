@@ -1,5 +1,5 @@
 import { Unzip, UnzipInflate, Zip, ZipDeflate, ZipPassThrough, strFromU8, strToU8 } from 'fflate';
-import { db, type ChatRecord, type Collection, type DocRecord, type GlossaryEntry, type NoteRecord, type TranslationRecord } from '../db/db';
+import { db, type ChatRecord, type Collection, type DocRecord, type GlossaryEntry, type InkStroke, type NoteRecord, type TranslationRecord } from '../db/db';
 
 /**
  * Whole-library backup: a .zip with manifest.json (records) + pdf/<docId>.pdf.
@@ -12,6 +12,7 @@ interface Manifest {
   docs: DocRecord[];
   collections: Collection[];
   notes: NoteRecord[];
+  inks?: InkStroke[];
   glossary: GlossaryEntry[];
   chats: ChatRecord[];
   translations: TranslationRecord[];
@@ -36,6 +37,7 @@ export async function exportLibrary(onProgress?: (msg: string) => void): Promise
     docs: await db.docs.toArray(),
     collections: await db.collections.toArray(),
     notes: await db.notes.toArray(),
+    inks: await db.inks.toArray(),
     glossary: await db.glossary.toArray(),
     chats: await db.chats.toArray(),
     translations: await db.translations.toArray(),
@@ -138,6 +140,9 @@ export async function importLibrary(file: Blob, onProgress?: (msg: string) => vo
     if (await db.notes.get(n.id)) continue;
     await db.notes.add({ ...n, docId: mapDoc(n.docId) });
     result.notes++;
+  }
+  for (const s of manifest.inks ?? []) {
+    if (!(await db.inks.get(s.id))) await db.inks.add({ ...s, docId: mapDoc(s.docId) });
   }
   for (const g of manifest.glossary) {
     if (!(await db.glossary.get(g.id))) await db.glossary.add({ ...g, scope: g.scope === 'global' ? 'global' : mapDoc(g.scope) });
