@@ -188,12 +188,17 @@ export function buildJob(block: Block): Job | string {
   if (!ops.length) return 'no text';
   if (ops.some((o) => o.rotated)) return 'rotated text';
   if (ops.some((o) => o.state.Tr === 3 || o.state.Tr === 7)) return 'invisible (OCR) text';
-  const lines = block.lines.map((l) => ({ baseline: l.baseline, ops: composeAccents([...l.ops].sort((a, b) => a.x - b.x)) })).sort((a, b) => b.baseline - a.baseline);
-  // small caps (\\textsc headings: "ABSTRACT", "1 INTRODUCTION") are drawn at the size of the capitals
+  const lines = block.lines.map((l) => ({ baseline: l.baseline, dropCap: l.dropCap, ops: composeAccents([...l.ops].sort((a, b) => a.x - b.x)) })).sort((a, b) => b.baseline - a.baseline);
+  // small caps (\textsc headings: "ABSTRACT", "1 INTRODUCTION", "I. Introduction") are drawn at the size of the capitals
   const UPPER = /^[\p{Lu}\d\s\p{P}]+$/u;
+  const SC_TEXT = /^[\p{L}\d\s\p{P}]+$/u;
   const onBase = (o: ShowOp) => lines.some((l) => Math.abs(o.y - l.baseline) < o.size * 0.15);
-  const capSize = Math.max(...ops.filter((o) => o.text.trim() && !isMathFont(o.baseFont)).map((o) => o.size));
-  const smallCaps = (block.kind === 'heading' || block.kind === 'title') && capSize > block.size * 1.1 && ops.every((o) => !o.text.trim() || isMathFont(o.baseFont) || o.size > capSize * 0.95 || (UPPER.test(o.text) && onBase(o)));
+  const lineOps = lines.flatMap((l) => l.ops);
+  const capSize = Math.max(...lineOps.filter((o) => o.text.trim() && !isMathFont(o.baseFont)).map((o) => o.size), block.size);
+  const smallCaps =
+    (block.kind === 'heading' || block.kind === 'title') &&
+    capSize > block.size * 1.1 &&
+    lineOps.every((o) => !o.text.trim() || isMathFont(o.baseFont) || o.size > capSize * 0.95 || ((UPPER.test(o.text) || (o.size >= capSize * 0.68 && SC_TEXT.test(o.text))) && onBase(o)));
   const size = smallCaps ? capSize : block.size;
   // bullets, check marks, stars… keep their original glyphs (the CJK font draws them differently)
   const SYMBOL = /^[•◦▪▫■□●○‣⁃∙★☆✓✔✗✘➢►▶◆◇]+$/u;
@@ -202,13 +207,32 @@ export function buildJob(block: Block): Job | string {
   const UNMAPPED = /^[\uFFFF\uFFFD\uE000-\uF8FF\u{F0000}-\u{FFFFD}]+$/u;
   // a lone accent / modifier glyph (the bar of ᾱ, the hat of x̂ in a text font) belongs to its formula
   const ACCENT = /^[\p{Sk}\p{Mn}˙¨¯ˆ˜´`]+$/u;
-  const script = (o: ShowOp, baseline: number) => o.size < size * 0.8 || Math.abs(o.y - baseline) > size * 0.18;
+  // inline small-caps words (e.g. "ETROLEUM" after drop-cap "P", or "NTRODUCTION"/"ntroduction" in IEEE headings)
+  // sit dead on the baseline at ~70-85% of cap size — they are text, never math sub/superscripts
+  const isSmallCapOp = (o: ShowOp, baseline: number) =>
+    !isMathFont(o.baseFont) &&
+    o.size >= size * 0.68 &&
+    Math.abs(o.y - baseline) <= size * 0.12 &&
+    /^[\p{L}\s\-–':.,]+$/u.test(o.text.trim());
+  const smallCapOps = new Set<ShowOp>();
+  for (const l of lines) {
+    l.ops.forEach((o, i) => {
+      if (!isSmallCapOp(o, l.baseline)) return;
+      const letters = o.text.match(/\p{L}/gu)?.length ?? 0;
+      const prev = l.ops[i - 1];
+      const next = l.ops[i + 1];
+      const adjSmallCap = (n?: ShowOp) =>
+        !!n && isSmallCapOp(n, l.baseline) && Math.abs(n.size - o.size) < size * 0.08 && Math.max(n.x - (o.x + o.width), o.x - (n.x + n.width)) < size * 0.35;
+      if (letters >= 2 || (letters === 1 && (adjSmallCap(prev) || adjSmallCap(next)))) smallCapOps.add(o);
+    });
+  }
+  const script = (o: ShowOp, baseline: number) => !smallCapOps.has(o) && (o.size < size * 0.8 || Math.abs(o.y - baseline) > size * 0.18);
   // a short text-font base before a script is part of the formula: bold "z" of z₀⁰, "x" of x_class
   const bases = new Set<ShowOp>();
   for (const l of lines)
     l.ops.forEach((o, i) => {
       const next = l.ops[i + 1];
-      if (next && /^\p{L}{1,2}$/u.test(o.text.trim()) && !isMathFont(o.baseFont) && !script(o, l.baseline) && script(next, l.baseline) && !(smallCaps && UPPER.test(next.text)) && Math.abs(next.x - (o.x + o.width)) < size * 0.15) bases.add(o);
+      if (next && /^\p{L}{1,2}$/u.test(o.text.trim()) && !isMathFont(o.baseFont) && !script(o, l.baseline) && script(next, l.baseline) && !(smallCaps && SC_TEXT.test(next.text)) && Math.abs(next.x - (o.x + o.width)) < size * 0.15) bases.add(o);
     });
   // ordinal suffixes ("1st", "2nd") are text, not superscript formulas
   const ordinal = (o: ShowOp, prev?: ShowOp) => /^(st|nd|rd|th)$/.test(o.text.trim()) && !!prev && /\d$/.test(prev.text) && o.x - (prev.x + prev.width) < size * 0.15;
@@ -219,7 +243,7 @@ export function buildJob(block: Block): Job | string {
     const own = (o: ShowOp, i: number) =>
       !ordinal(o, l.ops[i - 1]) &&
       !times(o, l.ops[i - 1]) &&
-      (bases.has(o) || isMathFont(o.baseFont) || ICON_FONT.test(o.baseFont) || UNMAPPED.test(o.text.trim()) || (o.text === '' && o.width > 0) || SYMBOL.test(o.text.trim()) || ACCENT.test(o.text.trim()) || (!!o.text.trim() && script(o, l.baseline) && !(smallCaps && UPPER.test(o.text) && onBase(o))));
+      (bases.has(o) || isMathFont(o.baseFont) || ICON_FONT.test(o.baseFont) || UNMAPPED.test(o.text.trim()) || (o.text === '' && o.width > 0) || SYMBOL.test(o.text.trim()) || ACCENT.test(o.text.trim()) || (!!o.text.trim() && script(o, l.baseline) && !(smallCaps && SC_TEXT.test(o.text) && onBase(o))));
     l.ops.forEach((o, i) => own(o, i) && formulaOps.add(o));
     // TeX sets digits, parentheses and operators of formulas in the text font: a short such run touching a
     // formula glyph belongs to it ("√(1 − β₂)", "(1 − β₁)") — words are separated by a real space and stay text
@@ -275,6 +299,16 @@ export function buildJob(block: Block): Job | string {
       } else if (/\p{L}-$/u.test(source) && /^[\p{Lu}\d]/u.test(next)) {
         // "GPT-\n4", "BERT-\nLarge": a real hyphen, no space
       } else if (source && !/\s$/.test(source)) source += ' ';
+    } else if (line.dropCap) {
+      const dc = line.dropCap;
+      const firstOp = line.ops.find((o) => o.text.trim());
+      const needsSpace =
+        dc.text.trim() === 'A' &&
+        !!firstOp &&
+        /^\p{Ll}/u.test(firstOp.text.trim()) &&
+        firstOp.size >= size * 0.9 &&
+        firstOp.x - (dc.x + dc.width) > size * 0.25;
+      source += dc.text.trim() + (needsSpace ? ' ' : '');
     }
     let prevEnd = Number.NaN;
     for (const op of line.ops) {

@@ -37,6 +37,8 @@ export type Align = 'left' | 'center' | 'justify';
 
 export interface Line {
   ops: ShowOp[];
+  /** optional oversized initial letter (drop-cap, e.g. IEEE \IEEEPARstart) folded into this first line */
+  dropCap?: ShowOp;
   baseline: number;
   x0: number;
   x1: number;
@@ -310,7 +312,10 @@ export function buildLines(ops: ShowOp[], opts: LineOptions): Line[] {
     };
     for (const o of byX) {
       const b = opBox(o);
-      const crossesGutter = gutters.some(([g0, g1]) => end <= g0 + 1 && b.x0 >= g1 - 1);
+      const crossesGutter = gutters.some(([g0, g1]) => {
+        const mid = (g0 + g1) / 2;
+        return (end <= g0 + 1 && b.x0 >= g1 - 1) || (end <= mid && b.x0 >= mid && b.x0 - end >= Math.min(6, (g1 - g0) * 0.65));
+      });
       const local = weak !== undefined && b.x0 - end > weak * lineSize && localGutter(r, end, b.x0);
       if (cur.length && (b.x0 - end > gap || local || (crossesGutter && b.x0 - end > lineSize * 0.5))) flush();
       cur.push(o);
@@ -672,13 +677,83 @@ export function analyzePage(model: PageTextModel, ctx: LayoutContext): PageLayou
   }
 
   // ---- text flow
-  const lines = mergeSectionNumbers(buildLines(flow, { gap: 1.45, minGap: 10, weak: 0.9, gutters: findGutters(flow) }));
+  const gutters = findGutters(flow);
+  const crossesAnyGutter = (x0: number, x1: number) => gutters.some(([g0, g1]) => x0 < g0 && x1 > g1);
+  const gapCrossesGutter = (leftX: number, rightX: number) => gutters.some(([g0, g1]) => {
+    const m = (g0 + g1) / 2;
+    return leftX <= m && rightX >= m;
+  });
+  // Hold out oversized single-letter drop-caps (e.g. IEEE \IEEEPARstart{P}{etroleum}) before line building so the
+  // drop-cap (whose baseline sits on line 2) cannot merge into line 2 and inflate its font size to ~28pt.
+  const dropCapCandidates = flow.filter((o) => {
+    const t = o.text.trim();
+    if (t.length !== 1 || !/^\p{Lu}$/u.test(t) || isMathFont(o.baseFont) || o.size < bodySize * 1.7) return false;
+    const db = opBox(o);
+    const rightBaselines = new Set<number>();
+    let hasLeftBody = false;
+    for (const other of flow) {
+      if (other === o || !other.text.trim() || other.size > o.size * 0.65 || other.size < bodySize * 0.7) continue;
+      if (other.y < o.y - bodySize * 0.6 || other.y > o.y + o.size * 0.95) continue;
+      const ob = opBox(other);
+      if (ob.x0 >= db.x1 - o.size * 0.15 && ob.x0 <= db.x1 + bodySize * 2.2 && !gapCrossesGutter(db.x1, ob.x0)) {
+        rightBaselines.add(Math.round(other.y / 2));
+      } else if (ob.x1 <= db.x0 + 1 && ob.x1 >= db.x0 - bodySize * 3 && !gapCrossesGutter(ob.x1, db.x0)) {
+        hasLeftBody = true;
+      }
+    }
+    return rightBaselines.size >= 2 && !hasLeftBody;
+  });
+  const dropCapSet = new Set(dropCapCandidates);
+  const flowNoDropCaps = dropCapSet.size ? flow.filter((o) => !dropCapSet.has(o)) : flow;
+  let lines = mergeSectionNumbers(buildLines(flowNoDropCaps, { gap: 1.45, minGap: 10, weak: 0.9, gutters }), gutters);
+  if (dropCapCandidates.length) {
+    const unmatched: ShowOp[] = [];
+    for (const dc of dropCapCandidates) {
+      const db = opBox(dc);
+      const beside = lines
+        .filter(
+          (l) =>
+            l.size <= dc.size * 0.65 &&
+            l.size >= bodySize * 0.7 &&
+            l.baseline >= dc.y - bodySize * 0.6 &&
+            l.baseline <= dc.y + dc.size * 0.95 &&
+            l.x0 >= db.x1 - dc.size * 0.15 &&
+            l.x0 <= db.x1 + bodySize * 2.2 &&
+            !gapCrossesGutter(db.x1, l.x0),
+        )
+        .sort((a, b) => b.baseline - a.baseline);
+      if (beside.length >= 2) {
+        const topLine = beside[0];
+        const firstOp = [...topLine.ops].filter((o) => o.text.trim()).sort((a, b) => a.x - b.x)[0];
+        const needsSpace =
+          dc.text.trim() === 'A' &&
+          !!firstOp &&
+          /^\p{Ll}/u.test(firstOp.text.trim()) &&
+          firstOp.size >= topLine.size * 0.9 &&
+          firstOp.x - db.x1 > topLine.size * 0.25;
+        topLine.dropCap = dc;
+        topLine.x0 = Math.min(topLine.x0, db.x0);
+        topLine.text = `${dc.text.trim()}${needsSpace ? ' ' : ''}${topLine.text}`;
+      } else {
+        unmatched.push(dc);
+      }
+    }
+    if (unmatched.length) {
+      lines = mergeSectionNumbers(
+        [...lines, ...buildLines(unmatched, { gap: 1.45, minGap: 10, weak: 0.9, gutters })].sort((a, b) => b.baseline - a.baseline || a.x0 - b.x0),
+        gutters,
+      );
+    }
+  }
   const textW = lines.length ? Math.max(...lines.map((l) => l.x1)) - Math.min(...lines.map((l) => l.x0)) : vx1 - vx0;
   const longLines = lines.filter((l) => l.x1 - l.x0 > textW * 0.33 && l.size >= bodySize * 0.9);
   const column = (l: { x0: number; x1: number }) => {
     const over = longLines.filter((m) => hOverlap(m, l) > 0);
     if (!over.length) return { x0: l.x0, x1: l.x1 };
-    return { x0: median(over.map((m) => m.x0)), x1: median(over.map((m) => m.x1)) };
+    if (crossesAnyGutter(l.x0, l.x1)) return { x0: Math.min(...over.map((m) => m.x0)), x1: Math.max(...over.map((m) => m.x1)) };
+    const sameSide = over.filter((m) => !crossesAnyGutter(m.x0, m.x1));
+    const pool = sameSide.length ? sameSide : over;
+    return { x0: median(pool.map((m) => m.x0)), x1: median(pool.map((m) => m.x1)) };
   };
 
   // equation lines
@@ -786,21 +861,32 @@ export function analyzePage(model: PageTextModel, ctx: LayoutContext): PageLayou
         if (last.bold !== l.bold && (last.bold || l.bold) && !midBold) continue;
         if (background(last) !== background(l)) continue;
         const pb = { x0: Math.min(...p.lines.map((x) => x.x0)), x1: Math.max(...p.lines.map((x) => x.x1)) };
+        if (crossesAnyGutter(pb.x0, pb.x1) !== crossesAnyGutter(l.x0, l.x1)) continue;
         if (hOverlap(pb, l) < Math.min(pb.x1 - pb.x0, l.x1 - l.x0) * 0.5) continue;
         // centred lines (titles, headers) share an axis rather than a left edge
         const sameAxis = Math.abs((l.x0 + l.x1) / 2 - (last.x0 + last.x1) / 2) < s * 0.8 && Math.abs((pb.x0 + pb.x1) / 2 - (last.x0 + last.x1) / 2) < s * 0.8;
-        if (l.x0 > pb.x0 + s * 6 && !sameAxis) continue;
+        if (Math.abs(l.x0 - pb.x0) > s * 6 && !sameAxis) continue;
+        // a short centred body-sized heading (e.g. IEEE "I. INTRODUCTION") never merges into a full-width paragraph below
+        const colMid = (col.x0 + col.x1) / 2;
+        const lastCentredHeading =
+          p.lines.length === 1 &&
+          last.size < bodySize * 1.2 &&
+          Math.abs((last.x0 + last.x1) / 2 - colMid) < s * 0.8 &&
+          last.x0 > col.x0 + s * 1.2 &&
+          last.x1 < col.x1 - s * 1.2;
+        if (lastCentredHeading && l.x0 <= col.x0 + s * 1.2 && l.x1 >= col.x1 - s * 1.5) continue;
         // new paragraph: indented first line after a short last line, or a run-in bold heading
         // the right edge the paragraph runs to: the column's, unless the paragraph is narrower (indented abstract)
         const reach = Math.max(...p.lines.map((x) => x.x1), l.x1);
         const lastShort = last.x1 < (Math.abs(col.x1 - reach) < s * 2 ? col.x1 : reach) - s * 2;
         // a wrapped numbered title hangs its second line under the title text: "3.6 Massive Multitask Language" / "Understanding"
         const hangingTitle = last.bold && l.bold && p.lines.length === 1 && /^(?:\d+(?:\.\d+)*\.?|[A-Z](?:\.\d+)*\.?)\s+\S/.test(last.text.trim()) && l.x0 - last.x0 < s * 4;
-        const indented = !hangingTitle && l.x0 > Math.min(...p.lines.map((x) => x.x0)) + s * 0.7;
+        const besideDropCap = !!p.lines[0].dropCap && l.baseline >= p.lines[0].dropCap.y - s * 0.6;
+        const indented = !hangingTitle && !besideDropCap && l.x0 > Math.min(...p.lines.map((x) => x.x0)) + s * 0.7;
         if ((lastShort && /[.:!?。)]$/.test(last.text)) || (indented && lastShort) || (runIn && (lastShort || /[.:!?。)\]]$/.test(last.text.trim())))) continue;
-        // a numbered sub-section title on its own short line ("3.1.1 Anchors") is not the start of the paragraph
+        // a numbered or all-caps section title on its own short line ("3.1.1 Anchors", "I. INTRODUCTION") is not the start of the paragraph
         // (bold titles are separated by the bold ↔ regular rule, and may wrap: "3.6 Massive Multitask Language" / "Understanding")
-        if (p.lines.length === 1 && !last.bold && !l.bold && lastShort && NUMBERED_HEADING.test(last.text.trim()) && last.text.trim().split(/\s+/).length <= 9) continue;
+        if (p.lines.length === 1 && !last.bold && !l.bold && lastShort && (NUMBERED_HEADING.test(last.text.trim()) || (CAPS_HEADING.test(last.text.trim()) && last.text.replace(/[^\p{L}]/gu, '').length >= 4 && !CAPS_HEADING.test(l.text.trim()))) && last.text.trim().split(/\s+/).length <= 9) continue;
         // extra vertical space (\parskip) after a sentence end starts a new paragraph
         if (p.lines.length >= 2) {
           const pitch = Math.min(...p.lines.slice(1).map((x, i) => p.lines[i].baseline - x.baseline));
@@ -904,18 +990,29 @@ export function analyzePage(model: PageTextModel, ctx: LayoutContext): PageLayou
   return out;
 }
 
-/** "3.1.1 Anchors", "A.2 Training details": a numbered sub-section title on a line of its own (often italic) */
-const NUMBERED_HEADING = /^(?:\d+(?:\.\d+)+\.?|[A-Z]\.\d+(?:\.\d+)*\.?)\s+\p{Lu}[^.!?;,]{0,70}$/u;
+/** "3.1.1 Anchors", "A.2 Training details", "I. INTRODUCTION", "II. Related Work": a numbered section title on a line of its own */
+const NUMBERED_HEADING = /^(?:\d+(?:\.\d+)+\.?|[A-Z]\.\d+(?:\.\d+)*\.?|[IVX]{1,4}\.)\s+\p{Lu}[^.!?;,]{0,70}$/u;
 const SECTION_NUMBER = /^(?:\d+(?:\.\d+)*\.?|[IVX]+\.|[A-Z]\.?)$/;
 /** "2." set an em away from "THE CASE FOR EXPLANATIONS" (a separate TJ fragment) is part of that heading line. */
-function mergeSectionNumbers(lines: Line[]): Line[] {
+function mergeSectionNumbers(lines: Line[], gutters: [number, number][] = []): Line[] {
   const drop = new Set<Line>();
   for (const a of lines) {
     if (!SECTION_NUMBER.test(a.text.trim())) continue;
-    const b = lines.find((l) => l !== a && !drop.has(l) && Math.abs(l.baseline - a.baseline) < a.size * 0.2 && l.x0 >= a.x1 - 0.5 && l.x0 - a.x1 < a.size * 2.5 && Math.abs(l.size - a.size) < a.size * 0.15);
+    const b = lines.find(
+      (l) =>
+        l !== a &&
+        !drop.has(l) &&
+        Math.abs(l.baseline - a.baseline) < a.size * 0.2 &&
+        l.x0 >= a.x1 - 0.5 &&
+        l.x0 - a.x1 < a.size * 2.5 &&
+        l.size >= a.size * 0.72 &&
+        l.size <= a.size * 1.15 &&
+        !gutters.some(([g0, g1]) => a.x1 <= (g0 + g1) / 2 && l.x0 >= (g0 + g1) / 2),
+    );
     if (!b) continue;
     b.ops = [...a.ops, ...b.ops];
     b.x0 = a.x0;
+    b.size = Math.max(a.size, b.size);
     b.text = `${a.text.trim()} ${b.text}`;
     b.bold = a.bold && b.bold;
     drop.add(a);
@@ -964,14 +1061,25 @@ export function findGutters(ops: ShowOp[]): [number, number][] {
   };
   const strict = scan(Math.max(2, rows.size * 0.04));
   if (strict.length) return strict;
-  // a full-width block (algorithm, wide table, equation) crossing the gutter on part of the page: accept a
-  // gap that many lines cross, if many rows end just left of it and start just right of it (two real columns)
-  // (the two columns' baselines need not match exactly)
-  return scan(rows.size * 0.3).filter(([g0, g1]) => {
-    const ends = text.filter((o) => o.x + o.width <= g0 + 1 && o.x + o.width > g0 - 25);
-    const starts = text.filter((o) => o.x >= g1 - 1 && o.x < g1 + 25);
-    const both = new Set(ends.filter((e) => starts.some((st) => Math.abs(st.y - e.y) < 2.5) && !text.some((o) => Math.abs(o.y - e.y) < 1 && o.x < g0 && o.x + o.width > g1)).map((e) => Math.round(e.y)));
-    return both.size >= Math.max(5, rows.size * 0.15);
+  // a full-width block (title, authors, copyright footer, wide table, equation) crossing the gutter on part of the
+  // page: accept a gap that some lines cross, if many rows end just left of it and start just right of it (two real
+  // columns — their baselines need not align, e.g. IEEE page 1 has 9pt abstract / 8pt footnotes left of 10pt body)
+  return scan(Math.max(8, rows.size * 0.35)).filter(([g0, g1]) => {
+    const mid = (g0 + g1) / 2;
+    const crossesRow = (y: number) => text.some((o) => Math.abs(o.y - y) < 1 && o.x < g0 && o.x + o.width > g1);
+    const ends = text.filter((o) => o.x + o.width <= g0 + 2 && o.x + o.width > g0 - 28 && !crossesRow(o.y));
+    const starts = text.filter((o) => o.x >= g1 - 2 && o.x < g1 + 28 && !crossesRow(o.y));
+    const both = new Set(ends.filter((e) => starts.some((st) => Math.abs(st.y - e.y) < 2.5)).map((e) => Math.round(e.y)));
+    if (both.size >= Math.max(5, rows.size * 0.15)) return true;
+    const endRows = new Set(ends.map((e) => Math.round(e.y / 3)));
+    const startRows = new Set(starts.map((st) => Math.round(st.y / 3)));
+    if (endRows.size < 8 || startRows.size < 8) return false;
+    const endY = [Math.min(...ends.map((e) => e.y)), Math.max(...ends.map((e) => e.y))];
+    const startY = [Math.min(...starts.map((s) => s.y)), Math.max(...starts.map((s) => s.y))];
+    const yOverlap = Math.min(endY[1], startY[1]) - Math.max(endY[0], startY[0]);
+    if (yOverlap < 40) return false;
+    const crossingRows = new Set(text.filter((o) => o.x < mid && o.x + o.width > mid).map((o) => Math.round(o.y / 3)));
+    return crossingRows.size < Math.min(endRows.size, startRows.size) * 0.6;
   });
 }
 
@@ -986,7 +1094,7 @@ function clusterLines(lines: Line[], joins: (upper: Line, lower: Line) => boolea
 }
 
 function makeBlock(lines: Line[], kind: BlockKind, region: Block['region'], translate: boolean, reason?: string): Block {
-  const ops = lines.flatMap((l) => l.ops);
+  const ops = lines.flatMap((l) => (l.dropCap ? [l.dropCap, ...l.ops] : l.ops));
   const box = unionBox(lines.map(lineBox));
   const size = median(lines.map((l) => l.size)) || 10;
   const gaps = lines.slice(1).map((l, i) => lines[i].baseline - l.baseline).filter((g) => g > 0);
