@@ -1025,10 +1025,13 @@ a {
   flex: none;
 }
 .tabbar-brand .brand-mark {
-  width: 22px;
-  height: 22px;
-  border-radius: 5px;
-  font-size: 12px;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  background: transparent;
+  box-shadow: none;
+  padding: 0;
+  overflow: hidden;
 }
 .tabbar-sep {
   width: 1px;
@@ -2655,6 +2658,14 @@ a {
   }
   .side {
     top: calc(90px + env(safe-area-inset-top, 0px));
+  }
+}
+
+/* iPadOS / iOS standalone PWA: ensure crisp unclipped top bar clear of system status bar & Liquid Glass top scrim */
+@media (display-mode: standalone) and (pointer: coarse) {
+  .tabbar {
+    padding-top: calc(env(safe-area-inset-top, 0px) + 6px);
+    height: calc(48px + env(safe-area-inset-top, 0px));
   }
 }
 

@@ -77,7 +77,29 @@ export function TabBar() {
   return (
     <header className="tabbar" role="tablist" aria-label="工作区标签页">
       <div className="tabbar-brand" onClick={activateLibrary} title="PaperBridge · 我的文库">
-        <div className="brand-mark">译</div>
+        <div className="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 64 64" width="24" height="24" style={{ display: 'block' }}>
+            <defs>
+              <linearGradient id="pb-brand-bg" x1="0" y1="1" x2="1" y2="0">
+                <stop offset="0%" stopColor="#0a1638" />
+                <stop offset="55%" stopColor="#173896" />
+                <stop offset="100%" stopColor="#2e6cf6" />
+              </linearGradient>
+              <linearGradient id="pb-brand-page" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor="#ffffff" stopOpacity="0.96" />
+                <stop offset="100%" stopColor="#cbd8f7" stopOpacity="0.72" />
+              </linearGradient>
+            </defs>
+            <rect width="64" height="64" rx="14.5" fill="url(#pb-brand-bg)" />
+            <rect x="13" y="16" width="17.5" height="32" rx="3" fill="url(#pb-brand-page)" />
+            <rect x="33.5" y="16" width="17.5" height="32" rx="3" fill="url(#pb-brand-page)" opacity="0.86" />
+            <rect x="16.5" y="36" width="10.5" height="2.2" rx="1.1" fill="#ffffff" opacity="0.92" />
+            <rect x="16.5" y="40.5" width="7.5" height="2.2" rx="1.1" fill="#ffffff" opacity="0.78" />
+            <rect x="37" y="36" width="10.5" height="2.2" rx="1.1" fill="#ffffff" opacity="0.92" />
+            <rect x="37" y="40.5" width="7.5" height="2.2" rx="1.1" fill="#ffffff" opacity="0.78" />
+            <path d="M21.8 31.5 C21.8 20.5 42.2 20.5 42.2 31.5" fill="none" stroke="#ffffff" strokeWidth="3.6" strokeLinecap="round" />
+          </svg>
+        </div>
       </div>
 
       {/* Pinned Library tab (like Zotero's My Library tab) */}

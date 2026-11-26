@@ -52,6 +52,15 @@ export default function App() {
     const el = document.documentElement;
     if (theme === 'system') el.removeAttribute('data-theme');
     else el.setAttribute('data-theme', theme);
+    // Keep iPadOS / iOS / Android status bar seamlessly matched to the app chrome color
+    const dark = theme === 'dark' || (theme === 'system' && window.matchMedia?.('(prefers-color-scheme: dark)').matches);
+    const chromeColor = dark ? '#14161a' : '#eaedf2';
+    document.querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]').forEach((m) => {
+      if (theme !== 'system') {
+        m.removeAttribute('media');
+        m.content = chromeColor;
+      }
+    });
   }, [theme]);
 
   useEffect(() => {
