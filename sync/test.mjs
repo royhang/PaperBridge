@@ -129,6 +129,31 @@ test('auth register/login, LWW + tombstone merge, encrypted settings, and per-us
     });
     assert.equal(getPdf.status, 200);
     assert.deepEqual(Buffer.from(await getPdf.arrayBuffer()), pdfBytes);
+
+    // Connector endpoints: save CNKI paper with PDF + list collections
+    const connSave = await (
+      await fetch(`${srv.base}/api/connector/save`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${loginA2.token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          meta: { title: '知网测试论文标题很长用于去重', authors: [{ family: '李', given: '锋' }], venue: '情报理论与实践', year: 2024, type: 'article' },
+          tags: ['知网', 'ChatGPT'],
+          collectionId: 'col-ai',
+          pdfBase64: pdfBytes.toString('base64'),
+          pdfFileName: '知网测试论文_李锋.pdf',
+        }),
+      })
+    ).json();
+    assert.equal(connSave.ok, true);
+    assert.equal(connSave.hasPdf, true);
+
+    const connCols = await (
+      await fetch(`${srv.base}/api/connector/collections`, {
+        headers: { Authorization: `Bearer ${loginA2.token}` },
+      })
+    ).json();
+    assert.equal(connCols.username, 'alice');
+    assert.ok(Array.isArray(connCols.collections));
   } finally {
     await srv.close();
   }

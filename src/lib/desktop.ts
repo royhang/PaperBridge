@@ -10,6 +10,8 @@ export interface DesktopBridge {
   platform: string;
   /** PDFs handed to the app by the OS ("open with", double-click); subscribe once */
   onOpenFiles?: (callback: (files: { name: string; data: Uint8Array }[]) => void) => void;
+  /** Local browser connector requests (127.0.0.1:23129) */
+  onConnectorRequest?: (handler: (action: string, payload: unknown) => Promise<unknown>) => void;
 }
 
 export function desktop(): DesktopBridge | undefined {

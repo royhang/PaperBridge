@@ -2,6 +2,7 @@ import { db, deleteDocument, sha256Hex, uid, type Collection, type DocRecord, ty
 import { openPdf, readTitle, type PDFDocumentProxy } from '../pdf/loader';
 import { useSettings } from '../store/settings';
 import { parseBibTeX } from './bibtex';
+import { parseCnkiFileName, parseReferences } from './cnki';
 import { crossrefToMeta, extractIdentifiers, guessMetaFromPdf, normalizeTitleForDedupe, parseArxivAtom, parseIdentifierInput, titleFromLayout, type TextRun } from './meta';
 import { NetError, getJson, proxyGet } from './net';
 import type { MetaSource, PaperMeta } from './types';
@@ -245,7 +246,9 @@ export async function importPdfBytes(
     return { docId: same.id, duplicate: true, title: same.title };
   }
   // A metadata-only entry for the same work? Attach the PDF to it instead of duplicating.
-  const existing = opts.meta ? await findDuplicate(opts.meta) : undefined;
+  const cnkiGuess = parseCnkiFileName(fileName);
+  const lookupMeta = opts.meta ?? (cnkiGuess.title ? { title: cnkiGuess.title } : undefined);
+  const existing = lookupMeta ? await findDuplicate(lookupMeta) : undefined;
   if (existing && !existing.hasPdf) {
     const d = await attachBytes(existing, buf, fileName);
     return { docId: d.id, duplicate: false, title: d.title };
@@ -398,6 +401,105 @@ export async function importBibTeXText(text: string, collectionId?: string): Pro
     added++;
   }
   return { added, skipped };
+}
+
+/** Import CNKI (GB/T 7714, NoteExpress, EndNote, RIS, RefWorks) or BibTeX references. */
+export async function importReferencesText(text: string, collectionId?: string): Promise<{ added: number; skipped: number; docIds: string[] }> {
+  const entries = parseReferences(text);
+  if (!entries.length) throw new Error('未能识别出有效的题录格式（支持知网 GB/T 7714、NoteExpress、EndNote、RIS、RefWorks 与 BibTeX）');
+  let added = 0;
+  let skipped = 0;
+  const docIds: string[] = [];
+  for (const e of entries) {
+    if (await findDuplicate(e.meta)) {
+      skipped++;
+      continue;
+    }
+    const doc = newDoc(e.meta, 'bibtex', {
+      tags: e.tags,
+      collectionIds: collectionId ? [collectionId] : [],
+    });
+    await db.docs.add(doc);
+    docIds.push(doc.id);
+    added++;
+  }
+  return { added, skipped, docIds };
+}
+
+export interface ConnectorSavePayload {
+  meta: PaperMeta;
+  tags?: string[];
+  collectionId?: string | null;
+  pdfBase64?: string;
+  pdfFileName?: string;
+}
+
+function base64ToArrayBuffer(b64: string): ArrayBuffer {
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes.buffer;
+}
+
+/** Save a paper captured by the PaperBridge Connector browser extension (metadata + optional PDF). */
+export async function saveConnectorItem(payload: ConnectorSavePayload): Promise<{ docId: string; title: string; duplicate: boolean; hasPdf: boolean }> {
+  const meta: PaperMeta = {
+    title: payload.meta?.title?.trim() || '未命名文献',
+    authors: Array.isArray(payload.meta?.authors) ? payload.meta.authors : [],
+    type: payload.meta?.type || 'article',
+    year: payload.meta?.year,
+    venue: payload.meta?.venue,
+    volume: payload.meta?.volume,
+    issue: payload.meta?.issue,
+    pages: payload.meta?.pages,
+    publisher: payload.meta?.publisher,
+    doi: payload.meta?.doi,
+    arxivId: payload.meta?.arxivId,
+    url: payload.meta?.url,
+    abstract: payload.meta?.abstract,
+    language: payload.meta?.language,
+  };
+  const tags = [...new Set((payload.tags ?? []).map((t) => t.trim()).filter(Boolean))];
+  const cid = payload.collectionId || undefined;
+  const pdfBuf = payload.pdfBase64 ? base64ToArrayBuffer(payload.pdfBase64) : undefined;
+  const fileName = payload.pdfFileName?.trim() || `${meta.title.slice(0, 60).replace(/[\\/:*?"<>|]/g, '_')}.pdf`;
+
+  const existing = await findDuplicate(meta);
+  if (existing) {
+    const mergedTags = [...new Set([...existing.tags, ...tags])];
+    const mergedCols = cid && !existing.collectionIds.includes(cid) ? [...existing.collectionIds, cid] : existing.collectionIds;
+    const mergedMeta: PaperMeta = {
+      ...existing.meta,
+      ...stripEmpty(meta),
+      authors: existing.meta.authors.length ? existing.meta.authors : meta.authors,
+    };
+    await db.docs.update(existing.id, {
+      meta: mergedMeta,
+      title: mergedMeta.title || existing.title,
+      tags: mergedTags,
+      collectionIds: mergedCols,
+      updatedAt: Date.now(),
+    });
+    if (pdfBuf && !existing.hasPdf) {
+      const fresh = (await db.docs.get(existing.id))!;
+      const attached = await attachBytes(fresh, pdfBuf, fileName);
+      return { docId: attached.id, title: attached.title, duplicate: true, hasPdf: true };
+    }
+    return { docId: existing.id, title: mergedMeta.title || existing.title, duplicate: true, hasPdf: existing.hasPdf };
+  }
+
+  if (pdfBuf) {
+    const r = await importPdfBytes(pdfBuf, fileName, { meta, metaSource: 'manual', collectionId: cid });
+    if (tags.length) await addTags([r.docId], tags);
+    return { docId: r.docId, title: r.title, duplicate: r.duplicate, hasPdf: true };
+  }
+
+  const doc = newDoc(meta, 'manual', {
+    tags,
+    collectionIds: cid ? [cid] : [],
+  });
+  await db.docs.add(doc);
+  return { docId: doc.id, title: doc.title, duplicate: false, hasPdf: false };
 }
 
 // ---------------------------------------------------------------- edits

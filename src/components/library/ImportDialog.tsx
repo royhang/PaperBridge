@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { importBibTeXText, importFromIdentifier } from '../../library/service';
+import { importFromIdentifier, importReferencesText } from '../../library/service';
 import { useEscape } from '../../lib/useEscape';
 import { Icon } from '../Icon';
 
@@ -27,6 +27,7 @@ export function ImportDialog({
   const [text, setText] = useState('');
   const [lines, setLines] = useState<Line[]>([]);
   const [running, setRunning] = useState(false);
+  const [bibText, setBibText] = useState('');
   const [bibMsg, setBibMsg] = useState('');
   const ctrl = useRef<AbortController | null>(null);
   const pdfRef = useRef<HTMLInputElement>(null);
@@ -86,7 +87,7 @@ export function ImportDialog({
             [
               ['pdf', 'PDF 文件'],
               ['link', 'DOI / arXiv / 链接'],
-              ['bibtex', 'BibTeX / Zotero'],
+              ['bibtex', '知网 / BibTeX / RIS'],
             ] as [Tab, string][]
           ).map(([k, v]) => (
             <button key={k} className={`tab${tab === k ? ' active' : ''}`} onClick={() => setTab(k)}>
@@ -166,26 +167,57 @@ export function ImportDialog({
           )}
           {tab === 'bibtex' && (
             <>
-              <p className="hint" style={{ marginTop: 0 }}>
-                导入 .bib 文件（Zotero：文件 → 导出文献库 → BibTeX；也支持 Google Scholar、JabRef 导出）。会创建题录条目，已在库中的会自动跳过；有 arXiv / DOI
-                的条目之后可以在详情里点「获取 PDF」。
+              <p className="hint" style={{ marginTop: 0, lineHeight: 1.55 }}>
+                支持直接粘贴或导入 <b>知网（CNKI）</b> 导出的 GB/T 7714、NoteExpress（.net）、EndNote（.enw）、RefWorks、RIS（.ris）以及 BibTeX（.bib）。知网关键词会自动转为标签；后续拖入知网下载的「标题_作者.pdf」会自动按标题合并到对应题录。
               </p>
-              <button className="btn primary" onClick={() => bibRef.current?.click()} disabled={running}>
-                选择 .bib 文件
-              </button>
+              <textarea
+                className="textarea"
+                rows={5}
+                placeholder={'直接粘贴知网点“引用”复制的 GB/T 7714 / NoteExpress / EndNote / RefWorks / RIS / BibTeX 内容…\n例：[1] 徐凯翔, 王永贵. 变与不变：……[J]. 西北工业大学学报(社会科学版), 2026(06): 42-49.'}
+                value={bibText}
+                onChange={(e) => setBibText(e.target.value)}
+                disabled={running}
+              />
+              <div className="row" style={{ marginTop: 10 }}>
+                <button
+                  className="btn primary"
+                  disabled={running || !bibText.trim()}
+                  onClick={async () => {
+                    setRunning(true);
+                    setBibMsg('');
+                    try {
+                      const r = await importReferencesText(bibText, collectionId);
+                      setBibMsg(`✓ 已导入 ${r.added} 条${r.skipped ? `，跳过 ${r.skipped} 条重复` : ''}。`);
+                      setBibText('');
+                      if (r.docIds[0]) onImported(r.docIds[0]);
+                    } catch (err) {
+                      setBibMsg(`导入失败：${(err as Error).message}`);
+                    } finally {
+                      setRunning(false);
+                    }
+                  }}
+                >
+                  粘贴导入
+                </button>
+                <button className="btn" onClick={() => bibRef.current?.click()} disabled={running}>
+                  选择题录文件 (.bib / .ris / .enw / .net / .txt)
+                </button>
+              </div>
               <input
                 ref={bibRef}
                 type="file"
-                accept=".bib,.bibtex,.txt"
+                accept=".bib,.bibtex,.ris,.enw,.net,.txt"
                 hidden
                 onChange={async (e) => {
                   const f = e.target.files?.[0];
                   e.target.value = '';
                   if (!f) return;
                   setRunning(true);
+                  setBibMsg('');
                   try {
-                    const r = await importBibTeXText(await f.text(), collectionId);
-                    setBibMsg(`已导入 ${r.added} 条${r.skipped ? `，跳过 ${r.skipped} 条重复` : ''}。`);
+                    const r = await importReferencesText(await f.text(), collectionId);
+                    setBibMsg(`✓ 已导入 ${r.added} 条${r.skipped ? `，跳过 ${r.skipped} 条重复` : ''}。`);
+                    if (r.docIds[0]) onImported(r.docIds[0]);
                   } catch (err) {
                     setBibMsg(`导入失败：${(err as Error).message}`);
                   } finally {
@@ -193,7 +225,16 @@ export function ImportDialog({
                   }
                 }}
               />
-              {bibMsg && <p>{bibMsg}</p>}
+              {bibMsg && (
+                <p style={{ color: bibMsg.startsWith('✓') ? 'var(--success)' : 'var(--danger)', marginTop: 10 }}>{bibMsg}</p>
+              )}
+              <div className="hint" style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid var(--border)' }}>
+                想要像 Zotero 一样在知网 / arXiv / IEEE 网页点一下直接收藏？安装{' '}
+                <a href="https://github.com/royhang/PaperBridge/releases/latest" target="_blank" rel="noreferrer">
+                  PaperBridge Connector 浏览器扩展
+                </a>
+                即可一键保存到指定分类。
+              </div>
             </>
           )}
         </div>

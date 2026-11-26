@@ -92,7 +92,7 @@ function mergeTable(serverMap, clientMap, serverDel, clientDel, tsOf) {
 function mergeStates(serverState, payload) {
   const next = emptyState();
   const docs = mergeTable(serverState.docs, payload.docs, serverState.deleted?.docs, payload.deleted?.docs, (d) => Number(d.updatedAt ?? d.addedAt ?? 0));
-  const collections = mergeTable(serverState.collections, payload.collections, serverState.deleted?.collections, payload.deleted?.collections, (c) => Number(c.createdAt ?? 0));
+  const collections = mergeTable(serverState.collections, payload.collections, serverState.deleted?.collections, payload.deleted?.collections, (c) => Number(c.updatedAt ?? c.createdAt ?? 0));
   const notes = mergeTable(serverState.notes, payload.notes, serverState.deleted?.notes, payload.deleted?.notes, (n) => Number(n.createdAt ?? 0));
   const glossary = mergeTable(serverState.glossary, payload.glossary, serverState.deleted?.glossary, payload.deleted?.glossary, (g) => Number(g.createdAt ?? 0));
   const chats = mergeTable(serverState.chats, payload.chats, serverState.deleted?.chats, payload.deleted?.chats, (c) => Number(c.updatedAt ?? 0));
@@ -309,6 +309,126 @@ export function createSyncServer(opts = {}) {
             translations: Object.keys(st.translations).length,
           },
         });
+      }
+
+      // GET /api/connector/collections — lightweight folder list for browser extension
+      if (req.method === 'GET' && path === '/api/connector/collections') {
+        const st = loadState(session.username);
+        const collections = Object.values(st.collections ?? {}).sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+        return sendJson(res, 200, { username: session.username, collections });
+      }
+
+      // POST /api/connector/save — save a paper (metadata + optional base64 PDF) directly from browser extension
+      if (req.method === 'POST' && path === '/api/connector/save') {
+        const body = await readJsonBody(req, maxSyncBytes);
+        const rawMeta = body?.meta && typeof body.meta === 'object' ? body.meta : {};
+        const title = String(rawMeta.title ?? '').trim() || '未命名文献';
+        const tags = [...new Set((Array.isArray(body?.tags) ? body.tags : []).map((t) => String(t).trim()).filter(Boolean))];
+        const collectionId = typeof body?.collectionId === 'string' && body.collectionId.trim() ? body.collectionId.trim() : null;
+        const pdfBase64 = typeof body?.pdfBase64 === 'string' && body.pdfBase64.length > 0 ? body.pdfBase64 : null;
+
+        let pdfInfo = null;
+        if (pdfBase64) {
+          const buf = Buffer.from(pdfBase64, 'base64');
+          if (buf.length > maxPdfBytes) return sendJson(res, 413, { error: 'PDF 文件超过单文件上限' });
+          if (buf.subarray(0, 5).toString('ascii') === '%PDF-') {
+            const hash = createHash('sha256').update(buf).digest('hex');
+            const targetFile = blobPath(hash);
+            if (!existsSync(targetFile)) {
+              const tmp = `${targetFile}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`;
+              writeFileSync(tmp, buf);
+              renameSync(tmp, targetFile);
+            }
+            const safeName = String(body?.pdfFileName ?? '').trim() || `${title.slice(0, 60).replace(/[\\/:*?"<>|]/g, '_')}.pdf`;
+            pdfInfo = { hash, size: buf.length, fileName: safeName };
+          }
+        }
+
+        const normTitle = (s) => String(s ?? '').normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}\p{M}]/gu, '');
+        const incomingDoi = typeof rawMeta.doi === 'string' ? rawMeta.doi.trim().toLowerCase() : '';
+        const incomingArxiv = typeof rawMeta.arxivId === 'string' ? rawMeta.arxivId.trim().toLowerCase().replace(/v\d+$/, '') : '';
+        const incomingTitleNorm = title.length > 8 ? normTitle(title) : '';
+
+        const saved = await withUserLock(session.username, () => {
+          const st = loadState(session.username);
+          const now = Date.now();
+          // Find existing active duplicate
+          const existing = Object.values(st.docs ?? {}).find((d) => {
+            if (!d || d.deletedAt) return false;
+            if (pdfInfo && d.hash && d.hash === pdfInfo.hash) return true;
+            if (incomingDoi && d.meta?.doi?.toLowerCase() === incomingDoi) return true;
+            if (incomingArxiv && d.meta?.arxivId?.toLowerCase().replace(/v\d+$/, '') === incomingArxiv) return true;
+            if (incomingTitleNorm && normTitle(d.meta?.title || d.title) === incomingTitleNorm) return true;
+            return false;
+          });
+
+          const cleanMeta = {
+            title,
+            authors: Array.isArray(rawMeta.authors) ? rawMeta.authors : [],
+            type: rawMeta.type || 'article',
+            ...(rawMeta.year ? { year: Number(rawMeta.year) || undefined } : {}),
+            ...(rawMeta.venue ? { venue: String(rawMeta.venue) } : {}),
+            ...(rawMeta.volume ? { volume: String(rawMeta.volume) } : {}),
+            ...(rawMeta.issue ? { issue: String(rawMeta.issue) } : {}),
+            ...(rawMeta.pages ? { pages: String(rawMeta.pages) } : {}),
+            ...(rawMeta.publisher ? { publisher: String(rawMeta.publisher) } : {}),
+            ...(rawMeta.doi ? { doi: String(rawMeta.doi) } : {}),
+            ...(rawMeta.arxivId ? { arxivId: String(rawMeta.arxivId) } : {}),
+            ...(rawMeta.url ? { url: String(rawMeta.url) } : {}),
+            ...(rawMeta.abstract ? { abstract: String(rawMeta.abstract) } : {}),
+            ...(rawMeta.language ? { language: String(rawMeta.language) } : {}),
+          };
+
+          let doc;
+          let duplicate = false;
+          if (existing) {
+            duplicate = true;
+            const mergedMeta = {
+              ...existing.meta,
+              ...cleanMeta,
+              authors: existing.meta?.authors?.length ? existing.meta.authors : cleanMeta.authors,
+            };
+            doc = {
+              ...existing,
+              title: mergedMeta.title || existing.title,
+              meta: mergedMeta,
+              tags: [...new Set([...(existing.tags ?? []), ...tags])],
+              collectionIds: collectionId && !(existing.collectionIds ?? []).includes(collectionId)
+                ? [...(existing.collectionIds ?? []), collectionId]
+                : (existing.collectionIds ?? []),
+              ...(pdfInfo && !existing.hasPdf ? { hasPdf: true, hash: pdfInfo.hash, size: pdfInfo.size, fileName: pdfInfo.fileName } : {}),
+              updatedAt: now,
+            };
+          } else {
+            const id = `${now.toString(36)}-${randomBytes(8).toString('hex')}`;
+            doc = {
+              id,
+              title,
+              fileName: pdfInfo?.fileName ?? '',
+              size: pdfInfo?.size ?? 0,
+              pageCount: 0,
+              addedAt: now,
+              lastOpenedAt: 0,
+              lastPage: 0,
+              hash: pdfInfo?.hash ?? '',
+              meta: cleanMeta,
+              metaSource: 'manual',
+              tags,
+              collectionIds: collectionId ? [collectionId] : [],
+              starred: false,
+              status: 'unread',
+              hasPdf: !!pdfInfo,
+              updatedAt: now,
+            };
+          }
+
+          st.docs[doc.id] = doc;
+          st.revision = (st.revision ?? 0) + 1;
+          st.updatedAt = now;
+          saveState(session.username, st);
+          return { ok: true, docId: doc.id, title: doc.title, duplicate, hasPdf: doc.hasPdf, revision: st.revision };
+        });
+        return sendJson(res, 200, saved);
       }
 
       // POST /api/sync/merge

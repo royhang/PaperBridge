@@ -1,3 +1,4 @@
+import { parseCnkiFileName } from './cnki';
 import type { Author, ItemType, PaperMeta } from './types';
 
 const doiPattern = /(?<![\w.])10\.\d{4,9}\/[^\s<>"“”‘’]+/i;
@@ -282,21 +283,27 @@ export function guessMetaFromPdf(
   layoutTitle?: string,
 ): Partial<PaperMeta> {
   const result: Partial<PaperMeta> = extractIdentifiers(firstPageText);
+  const cnkiFile = parseCnkiFileName(fileName);
   const pdfTitle = collapseWhitespace(info?.Title ?? '');
   const mainText = firstPageText.split(referencesHeading, 1)[0];
   const lines = mainText.split(/\r?\n/).map(collapseWhitespace).filter(Boolean).slice(0, 18);
-  const title = plausiblePdfTitle(pdfTitle, fileName) ? pdfTitle : layoutTitle || lines.find((line) =>
-    line.length >= 12
-    && /\p{L}/u.test(line)
-    && !NOT_TITLE.test(line),
-  );
+  const title = plausiblePdfTitle(pdfTitle, fileName)
+    ? pdfTitle
+    : cnkiFile.title || layoutTitle || lines.find((line) =>
+        line.length >= 12
+        && /\p{L}/u.test(line)
+        && !NOT_TITLE.test(line),
+      );
   if (title) result.title = title;
   if (info?.Author) {
     const authors = info.Author.split(/[;,]|\s+and\s+/i).map(splitAuthorName)
       .filter(({ family, given }) => family || given);
     if (authors.length) result.authors = authors;
+  } else if (cnkiFile.author) {
+    result.authors = [splitAuthorName(cnkiFile.author)];
   }
   const year = lines.join('\n').slice(0, 1500).match(/(?<![\w./-])(?:19|20)\d{2}(?![\w/-]|\.\d)/)?.[0];
   if (year) result.year = Number(year);
+  else if (cnkiFile.year) result.year = cnkiFile.year;
   return result;
 }

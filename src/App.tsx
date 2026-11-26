@@ -4,9 +4,10 @@ import { NotesOverview } from './components/library/NotesOverview';
 import { Reader } from './components/Reader';
 import { SettingsDialog } from './components/SettingsDialog';
 import { TabBar } from './components/TabBar';
+import { db } from './db/db';
 import { desktop } from './lib/desktop';
 import type { SettingsSection } from './lib/nav';
-import { importPdfBytes } from './library/service';
+import { importPdfBytes, saveConnectorItem, type ConnectorSavePayload } from './library/service';
 import { initAutoSync } from './services/sync';
 import { useSettings } from './store/settings';
 import { useTabs } from './store/tabs';
@@ -120,9 +121,10 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
-  // Desktop client: PDFs opened from the OS are imported and opened as tabs
+  // Desktop client: PDFs opened from the OS & browser connector requests (127.0.0.1:23129)
   useEffect(() => {
-    desktop()?.onOpenFiles?.(async (files) => {
+    const d = desktop();
+    d?.onOpenFiles?.(async (files) => {
       const opened: { id: string; title: string }[] = [];
       for (const f of files) {
         try {
@@ -136,6 +138,16 @@ export default function App() {
       opened.forEach((o, i) => {
         useTabs.getState().openDoc(o.id, { title: o.title, background: i < opened.length - 1 });
       });
+    });
+    d?.onConnectorRequest?.(async (action, payload) => {
+      if (action === 'collections') {
+        const collections = await db.collections.orderBy('order').toArray();
+        return { collections };
+      }
+      if (action === 'save') {
+        return saveConnectorItem(payload as ConnectorSavePayload);
+      }
+      throw new Error(`Unknown connector action: ${action}`);
     });
   }, []);
 

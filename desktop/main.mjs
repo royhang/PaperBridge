@@ -58,6 +58,100 @@ let info = null;
 // PDFs to open: from the command line ("open with", file association), a second launch or macOS open-file
 let pending = [];
 let rendererReady = false;
+const connectorPending = new Map();
+let connectorSeq = 0;
+
+function callRendererConnector(action, payload, timeoutMs = 45_000) {
+  return new Promise((resolve, reject) => {
+    if (!win || win.isDestroyed() || !rendererReady) {
+      reject(new Error('PaperBridge 窗口尚未就绪，请稍后重试'));
+      return;
+    }
+    const id = ++connectorSeq;
+    const timer = setTimeout(() => {
+      connectorPending.delete(id);
+      reject(new Error('PaperBridge 桌面端响应超时'));
+    }, timeoutMs);
+    connectorPending.set(id, {
+      resolve: (data) => {
+        clearTimeout(timer);
+        resolve(data);
+      },
+      reject: (err) => {
+        clearTimeout(timer);
+        reject(err);
+      },
+    });
+    win.webContents.send('paperbridge:connector-req', { id, action, payload });
+  });
+}
+
+/**
+ * Local connector HTTP server (127.0.0.1:23129) for the PaperBridge Chrome/Edge extension,
+ * modeled after Zotero Connector. Only allows extension origins or originless local calls.
+ */
+async function startConnectorServer(version) {
+  const MAX_CONNECTOR_BODY = 64 * 1024 * 1024;
+  const server = createServer(async (req, res) => {
+    const origin = String(req.headers.origin ?? '');
+    const allowedOrigin =
+      !origin || /^(?:chrome-extension|moz-extension|edge-extension|safari-web-extension):\/\//i.test(origin);
+    const cors = {
+      'Access-Control-Allow-Origin': origin || '*',
+      'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type',
+      'Access-Control-Max-Age': '86400',
+      ...(req.headers['access-control-request-private-network'] === 'true'
+        ? { 'Access-Control-Allow-Private-Network': 'true' }
+        : {}),
+    };
+    const send = (status, body) => {
+      const buf = Buffer.from(JSON.stringify(body));
+      res.writeHead(status, { ...cors, 'Content-Type': 'application/json; charset=utf-8', 'Content-Length': String(buf.length) });
+      res.end(buf);
+    };
+
+    if (req.method === 'OPTIONS') {
+      res.writeHead(204, cors);
+      res.end();
+      return;
+    }
+    if (!allowedOrigin) {
+      return send(403, { error: 'Forbidden origin' });
+    }
+
+    const url = new URL(req.url ?? '/', 'http://127.0.0.1');
+    try {
+      if (req.method === 'GET' && url.pathname === '/connector/ping') {
+        return send(200, { ok: true, app: 'paperbridge-desktop', version });
+      }
+      if (req.method === 'GET' && url.pathname === '/connector/collections') {
+        const data = await callRendererConnector('collections', {});
+        return send(200, data);
+      }
+      if (req.method === 'POST' && url.pathname === '/connector/save') {
+        const raw = await readLimitedBody(req, MAX_CONNECTOR_BODY);
+        const payload = raw ? JSON.parse(raw.toString('utf8')) : {};
+        const data = await callRendererConnector('save', payload);
+        return send(200, { ok: true, ...data });
+      }
+      send(404, { error: 'Not found' });
+    } catch (e) {
+      send(e?.status ?? 500, { error: e instanceof Error ? e.message : String(e) });
+    }
+  });
+
+  try {
+    await new Promise((resolve, reject) => {
+      server.once('error', reject);
+      server.listen(23129, '127.0.0.1', resolve);
+    });
+    return server;
+  } catch (e) {
+    console.warn('connector server disabled:', e?.message ?? e);
+    return null;
+  }
+}
 const pdfArgs = (argv) => argv.filter((a) => /\.pdf$/i.test(a) && !a.startsWith('-'));
 pending.push(...pdfArgs(process.argv.slice(1)));
 
@@ -271,6 +365,7 @@ app.on('second-instance', (_event, argv) => {
 
 app.whenReady().then(async () => {
   const proxy = await startProxy();
+  const connector = await startConnectorServer(app.getVersion());
   info = { proxyUrl: proxy.url, proxyToken: proxy.token, version: app.getVersion(), platform: process.platform };
   ipcMain.on('paperbridge:info', (event) => {
     event.returnValue = info;
@@ -278,6 +373,13 @@ app.whenReady().then(async () => {
   ipcMain.on('paperbridge:ready', () => {
     rendererReady = true;
     flushFiles();
+  });
+  ipcMain.on('paperbridge:connector-res', (_event, msg) => {
+    const entry = connectorPending.get(msg?.id);
+    if (!entry) return;
+    connectorPending.delete(msg.id);
+    if (msg.ok) entry.resolve(msg.data);
+    else entry.reject(new Error(msg.error || 'Connector request failed'));
   });
   protocol.handle('app', serve);
   // a small menu (hidden until Alt on Windows/Linux) keeps the usual shortcuts: copy/paste, zoom, reload
@@ -296,7 +398,10 @@ app.whenReady().then(async () => {
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
-  app.on('before-quit', () => proxy.server.close());
+  app.on('before-quit', () => {
+    proxy.server.close();
+    connector?.close();
+  });
 });
 
 app.on('window-all-closed', () => {

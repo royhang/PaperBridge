@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>PaperBridge Connector</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <header class="head">
+      <div class="brand">
+        <span class="brand-mark">P</span>
+        <span class="brand-title">PaperBridge</span>
+      </div>
+      <div class="mode-switch" role="group" aria-label="保存目标">
+        <button id="modeDesktop" class="mode-btn" type="button" title="直连本机打开的 PaperBridge 桌面端">桌面端</button>
+        <button id="modeCloud" class="mode-btn" type="button" title="直连 PaperBridge 云同步服务器（网页版/多端）">云同步</button>
+      </div>
+    </header>
+
+    <div id="connBar" class="conn-bar">
+      <span id="connDot" class="dot"></span>
+      <span id="connText" class="conn-text">正在连接 PaperBridge…</span>
+      <button id="toggleCloudCfg" class="link-btn hidden" type="button">设置账号</button>
+    </div>
+
+    <!-- Cloud login panel (shown when Cloud mode is unauthenticated or user clicks 设置账号) -->
+    <section id="cloudPanel" class="panel hidden">
+      <div class="field">
+        <label for="serverUrl">同步服务器地址</label>
+        <input id="serverUrl" type="url" placeholder="https://your-server:9999" />
+      </div>
+      <div class="grid2">
+        <div class="field">
+          <label for="username">用户名</label>
+          <input id="username" type="text" autocomplete="username" placeholder="用户名" />
+        </div>
+        <div class="field">
+          <label for="password">密码</label>
+          <input id="password" type="password" autocomplete="current-password" placeholder="密码" />
+        </div>
+      </div>
+      <div class="row">
+        <button id="cloudLoginBtn" class="btn primary" type="button">登录云同步</button>
+        <button id="cloudLogoutBtn" class="btn danger hidden" type="button">退出</button>
+        <div class="spacer"></div>
+        <button id="cloudCancelBtn" class="btn ghost hidden" type="button">返回</button>
+      </div>
+      <div id="cloudErr" class="msg err hidden"></div>
+    </section>
+
+    <!-- Main Zotero-Connector-style save form -->
+    <main id="savePanel" class="panel">
+      <div class="field">
+        <label for="folderSelect">保存到</label>
+        <select id="folderSelect">
+          <option value="">我的文库</option>
+        </select>
+      </div>
+
+      <div class="field">
+        <label for="titleInput">
+          标题
+          <span id="sourceBadge" class="badge">网页</span>
+        </label>
+        <input id="titleInput" type="text" placeholder="正在读取当前网页题录…" />
+        <div id="metaSummary" class="meta-summary"></div>
+      </div>
+
+      <div class="field">
+        <label for="tagsInput">标签（用逗号或分号分隔）</label>
+        <input id="tagsInput" type="text" placeholder="例：大模型, 综述, 精读" />
+      </div>
+
+      <label id="pdfRow" class="check-row hidden">
+        <input id="fetchPdfChk" type="checkbox" checked />
+        <span>同时尝试附带 PDF（使用当前浏览器登录态）</span>
+      </label>
+
+      <div id="statusMsg" class="msg hidden"></div>
+
+      <div class="row actions">
+        <button id="refreshBtn" class="btn ghost" type="button" title="重新读取页面信息与分类列表">刷新</button>
+        <div class="spacer"></div>
+        <button id="saveBtn" class="btn primary" type="button">完成并保存</button>
+      </div>
+    </main>
+
+    <script src="popup.js"></script>
+  </body>
+</html>
