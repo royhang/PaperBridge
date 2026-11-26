@@ -155,7 +155,7 @@ export function SettingsDialog({ initial, onClose }: { initial: SettingsSection;
 
   return (
     <div className="overlay" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="dialog" role="dialog" aria-label="设置">
+      <div className="dialog settings-dialog" role="dialog" aria-label="设置">
         <div className="dialog-head">
           设置
           <div className="spacer" />
@@ -906,7 +906,7 @@ function ProviderEditor({
               <label className="check" style={{ marginBottom: cfg.useProxy ? 8 : 0 }}>
                 <input type="checkbox" checked={!!cfg.useProxy} onChange={(e) => patch({ useProxy: e.target.checked })} />
                 通过中转代理请求（解决浏览器跨域拦截）
-                <span className="hint">（仅当网页版直连报 CORS / Failed to fetch 时需要，如学校接口、DeepL、百度；OpenAI/DeepSeek 等通常无需勾选）</span>
+                <span className="hint">仅当网页版直连报 CORS / Failed to fetch 时需要，如学校接口、DeepL、百度；OpenAI/DeepSeek 等通常无需勾选</span>
               </label>
               {cfg.useProxy && (
                 <div className="grid2">
@@ -1143,13 +1143,13 @@ function SyncSection({ onOpenSection }: { onOpenSection: (s: SettingsSection) =>
         <label className="check" style={{ marginTop: 14 }}>
           <input type="checkbox" checked={sync.autoSync} onChange={(e) => sync.set({ autoSync: e.target.checked })} />
           自动后台同步
-          <span className="hint">（启动时、切换回窗口及本地修改后自动双向合并）</span>
+          <span className="hint">启动时、切换回窗口及本地修改后自动双向合并</span>
         </label>
 
         <label className="check">
           <input type="checkbox" checked={sync.syncSettings} onChange={(e) => sync.set({ syncSettings: e.target.checked })} />
           端到端加密同步 API 配置与偏好
-          <span className="hint">（使用账号密码在本地 AES-256-GCM 加密后上传，换设备登录即用）</span>
+          <span className="hint">使用账号密码在本地 AES-256-GCM 加密后上传，换设备登录即用</span>
         </label>
 
         <div className="hint" style={{ margin: '8px 0 12px', lineHeight: 1.6 }}>
@@ -1326,7 +1326,7 @@ function TranslateSection() {
       <label className="check">
         <input type="checkbox" checked={s.autoTerms !== false} onChange={(e) => s.set({ autoTerms: e.target.checked })} />
         全文翻译前自动提取术语
-        <span className="hint">（大模型先读前两页，生成本文献的术语表，保证全文译名一致；可在「术语」面板修改）</span>
+        <span className="hint">大模型先读前两页，生成本文献的术语表，保证全文译名一致；可在「术语」面板修改</span>
       </label>
     </>
   );

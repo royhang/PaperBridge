@@ -876,6 +876,9 @@ a {
   border: 1px solid var(--border);
   overflow: hidden;
 }
+.dialog.settings-dialog {
+  height: min(620px, 86dvh);
+}
 .dialog-head {
   display: flex;
   align-items: center;
@@ -937,9 +940,19 @@ a {
 .check {
   display: flex;
   align-items: center;
-  gap: 8px;
+  flex-wrap: wrap;
+  gap: 2px 8px;
   cursor: pointer;
   margin-bottom: 10px;
+}
+.check input[type='checkbox'] {
+  flex: none;
+}
+.check .hint {
+  flex: 1 0 100%;
+  padding-left: 22px;
+  margin-top: 2px;
+  line-height: 1.5;
 }
 
 @media (max-width: 720px) {
@@ -1359,9 +1372,6 @@ a {
 }
 .side-item:hover .side-del {
   display: block;
-}
-.side-item:hover .count {
-  display: none;
 }
 .side-section {
   display: flex;
@@ -2273,8 +2283,10 @@ a {
 .side-item.root-item:hover .count {
   display: inline;
 }
-.side-item.tree-item:hover .count {
-  display: none;
+@media (hover: hover) {
+  .side-item.tree-item:hover .count {
+    display: none;
+  }
 }
 .tree-caret {
   width: 16px;
