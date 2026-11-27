@@ -3,6 +3,23 @@
  * port with a random token and hands both to the page through the preload script; in a browser this is
  * undefined and the user-configured proxy applies.
  */
+export interface LanAddress {
+  name: string;
+  address: string;
+  url: string;
+}
+
+export interface LanShareStatus {
+  enabled: boolean;
+  running: boolean;
+  port: number;
+  localUrl: string;
+  urls: LanAddress[];
+  primaryUrl: string;
+  dataDir: string;
+  error: string;
+}
+
 export interface DesktopBridge {
   proxyUrl: string;
   proxyToken: string;
@@ -12,6 +29,11 @@ export interface DesktopBridge {
   onOpenFiles?: (callback: (files: { name: string; data: Uint8Array }[]) => void) => void;
   /** Local browser connector requests (127.0.0.1:23129) */
   onConnectorRequest?: (handler: (action: string, payload: unknown) => Promise<unknown>) => void;
+  /** Built-in LAN share server for iPadOS / phone reading & sync on the same Wi-Fi */
+  lanShare?: {
+    getStatus: () => Promise<LanShareStatus>;
+    configure: (opts: { enabled?: boolean; port?: number }) => Promise<LanShareStatus>;
+  };
 }
 
 export function desktop(): DesktopBridge | undefined {

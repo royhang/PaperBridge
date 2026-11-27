@@ -1,3 +1,4 @@
+import { sha256HexAsync } from '../lib/sha256';
 import { ensureOk } from './sse';
 import { ProviderError } from './types';
 import type { LangCode, MTProvider, ProviderConfig, ProviderContext } from './types';
@@ -14,14 +15,12 @@ export function createYoudaoProvider(cfg: ProviderConfig, ctx: ProviderContext):
     async translate({ texts, from, to, signal }) {
       signal?.throwIfAborted();
       const translations: string[] = [];
-      const encoder = new TextEncoder();
       for (const q of texts) {
         signal?.throwIfAborted();
-        const salt = crypto.randomUUID();
+        const salt = crypto.randomUUID?.() ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
         const curtime = Math.floor(Date.now() / 1000).toString();
         const input = q.length <= 20 ? q : q.slice(0, 10) + q.length + q.slice(-10);
-        const digest = await crypto.subtle.digest('SHA-256', encoder.encode(appKey + input + salt + curtime + cfg.apiKey));
-        const sign = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+        const sign = await sha256HexAsync(appKey + input + salt + curtime + cfg.apiKey);
 
         signal?.throwIfAborted();
         const res = await ctx.fetch(url, {

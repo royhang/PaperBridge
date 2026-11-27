@@ -103,9 +103,10 @@ docker compose up -d
 
 ## 全端使用指南
 
-### 1. Windows 桌面客户端（免安装便携版）
+### 1. Windows 桌面客户端（免安装便携版 · 支持局域网直连 iPad）
 - 在 [GitHub Releases](https://github.com/royhang/PaperBridge/releases) 下载 `PaperBridge-<版本>-win-x64.zip`，解压运行 `PaperBridge.exe`。
 - 内置跨域代理（自动兼容系统代理与 IPv4/IPv6，学校接口 / DeepL / 百度 / 有道直连免配置）、内置中文字体、支持本地端口 `127.0.0.1:23129` 与浏览器插件秒级联动。
+- **免 Docker 局域网共享给 iPad**：在「设置 → 云同步」一键开启 **「局域网共享」**（默认端口 `8787`），同一 Wi-Fi 下 iPad 打开显示的 `http://192.168.x.x:8787` 即可阅读、手写与全库满速同步，并自动复用电脑端网络代理（无需云服务器或 Docker）。
 
 ### 2. 知网 / 学术站一键入库扩展（PaperBridge Connector）
 1. 在 [GitHub Releases](https://github.com/royhang/PaperBridge/releases) 下载 `PaperBridge-Connector-<版本>.zip` 并解压（或直接加载仓库 `extension/` 目录）。

@@ -13,6 +13,8 @@ import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { fileURLToPath } from 'node:url';
 import { BrowserWindow, Menu, app, ipcMain, net, protocol, screen, shell } from 'electron';
+import { createLanController } from './lan-server.mjs';
+import { createSyncServer } from './sync/server.mjs';
 import {
   MAX_BODY_BYTES,
   ProxyError,
@@ -194,18 +196,18 @@ async function readLimitedBody(request, maxBytes) {
 }
 
 /**
- * Local desktop proxy powered by Electron's Chromium network stack (`net.fetch`),
+ * Desktop proxy request handler powered by Electron's Chromium network stack (`net.fetch`),
  * so system proxy / Clash / VPN, Happy Eyeballs IPv4/IPv6 fallback, and OS root
- * certificates all work automatically on Windows, macOS and Linux.
+ * certificates all work automatically on Windows, macOS and Linux — and can also be
+ * shared with LAN devices (iPadOS) via the built-in LAN share server.
  */
-async function startProxy() {
-  const token = randomBytes(24).toString('hex');
-  const server = createServer(async (request, response) => {
+function createElectronProxyHandler(token) {
+  return async (request, response) => {
     const controller = new AbortController();
     response.once('close', () => {
       if (!response.writableFinished) controller.abort();
     });
-    request.socket.setNoDelay(true);
+    request.socket?.setNoDelay?.(true);
 
     const incoming = new Headers();
     for (const [name, value] of Object.entries(request.headers)) {
@@ -270,7 +272,12 @@ async function startProxy() {
       writeNodeHeaders(response, failure.status, failure.headers);
       response.end(await failure.text());
     }
-  });
+  };
+}
+
+async function startProxy() {
+  const token = randomBytes(24).toString('hex');
+  const server = createServer(createElectronProxyHandler(token));
   await new Promise((resolve, reject) => {
     server.once('error', reject);
     server.listen(0, '127.0.0.1', resolve);
@@ -366,10 +373,20 @@ app.on('second-instance', (_event, argv) => {
 app.whenReady().then(async () => {
   const proxy = await startProxy();
   const connector = await startConnectorServer(app.getVersion());
+  const lan = createLanController({
+    webDir: WEB,
+    dataDir: join(app.getPath('userData'), 'lan-sync-data'),
+    configFile: join(app.getPath('userData'), 'lan-share.json'),
+    createProxyHandler: createElectronProxyHandler,
+    createSyncServer,
+  });
+  await lan.startIfEnabled();
   info = { proxyUrl: proxy.url, proxyToken: proxy.token, version: app.getVersion(), platform: process.platform };
   ipcMain.on('paperbridge:info', (event) => {
     event.returnValue = info;
   });
+  ipcMain.handle('paperbridge:lan-status', () => lan.getStatus());
+  ipcMain.handle('paperbridge:lan-configure', (_event, opts) => lan.configure(opts));
   ipcMain.on('paperbridge:ready', () => {
     rendererReady = true;
     flushFiles();
@@ -401,6 +418,7 @@ app.whenReady().then(async () => {
   app.on('before-quit', () => {
     proxy.server.close();
     connector?.close();
+    void lan.close();
   });
 });
 

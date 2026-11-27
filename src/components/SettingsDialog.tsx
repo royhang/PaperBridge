@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { create } from 'zustand';
-import { desktop } from '../lib/desktop';
+import { desktop, type LanShareStatus } from '../lib/desktop';
+import { hasWebCryptoSubtle } from '../lib/sha256';
 import { db, uid } from '../db/db';
 import { exportLibrary, importLibrary } from '../library/backup';
 import type { SettingsSection } from '../lib/nav';
@@ -1052,8 +1053,187 @@ function ProviderEditor({
 
 // ---------------------------------------------------------------- cloud sync
 
+function LanShareCard({
+  currentServerUrl,
+  loggedInUser,
+  onUseLocalServer,
+}: {
+  currentServerUrl: string;
+  loggedInUser: string;
+  onUseLocalServer: (url: string) => void;
+}) {
+  const api = desktop()?.lanShare;
+  const [status, setStatus] = useState<LanShareStatus | null>(null);
+  const [portInput, setPortInput] = useState('8787');
+  const [busy, setBusy] = useState(false);
+  const [copiedUrl, setCopiedUrl] = useState('');
+
+  useEffect(() => {
+    if (!api) return;
+    let alive = true;
+    void api.getStatus().then((st) => {
+      if (!alive) return;
+      setStatus(st);
+      setPortInput(String(st.port));
+    });
+    return () => {
+      alive = false;
+    };
+  }, [api]);
+
+  if (!api) return null;
+
+  const refresh = async () => {
+    setBusy(true);
+    try {
+      const st = await api.getStatus();
+      setStatus(st);
+      setPortInput(String(st.port));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const toggle = async () => {
+    if (!status) return;
+    setBusy(true);
+    try {
+      const parsedPort = Number(portInput) || status.port || 8787;
+      const st = await api.configure({ enabled: !status.enabled, port: parsedPort });
+      setStatus(st);
+      setPortInput(String(st.port));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const applyPort = async () => {
+    if (!status) return;
+    setBusy(true);
+    try {
+      const parsedPort = Number(portInput) || 8787;
+      const st = await api.configure({ enabled: status.enabled, port: parsedPort });
+      setStatus(st);
+      setPortInput(String(st.port));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const copyUrl = async (url: string) => {
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopiedUrl(url);
+      setTimeout(() => setCopiedUrl((cur) => (cur === url ? '' : cur)), 1800);
+    } catch {
+      /* ignore */
+    }
+  };
+
+  const normalizedCur = currentServerUrl.trim().replace(/\/+$/, '');
+  const connectedToLan = Boolean(status?.running && normalizedCur === status.localUrl);
+  const portDirty = Boolean(status && String(status.port) !== portInput.trim());
+
+  return (
+    <div className="sync-card lan-card">
+      <div className="row" style={{ gap: 8 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div className="row" style={{ gap: 6 }}>
+            <span style={{ fontWeight: 600, fontSize: 13.5 }}>局域网共享（iPad / 手机免 Docker 直连）</span>
+            <span className={`lan-pill${status?.running ? ' on' : ''}`}>
+              {status?.running ? `运行中 · :${status.port}` : '未开启'}
+            </span>
+          </div>
+          <div className="hint" style={{ marginTop: 2 }}>
+            开启后本机直接提供网页阅读、多端同步与跨域代理，同一 Wi-Fi 下 iPad 打开地址即可阅读并同步。
+          </div>
+        </div>
+        <button className={`btn${status?.enabled ? '' : ' primary'}`} disabled={busy || !status} onClick={() => void toggle()}>
+          {busy ? '处理中…' : status?.enabled ? '停止共享' : '开启共享'}
+        </button>
+      </div>
+
+      <div className="row" style={{ marginTop: 10, gap: 8 }}>
+        <label className="hint" style={{ margin: 0 }}>
+          监听端口
+        </label>
+        <input
+          className="input sm"
+          style={{ width: 84 }}
+          type="number"
+          min={1024}
+          max={65535}
+          value={portInput}
+          onChange={(e) => setPortInput(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && portDirty && void applyPort()}
+        />
+        {portDirty && (
+          <button className="btn sm" disabled={busy} onClick={() => void applyPort()}>
+            应用端口
+          </button>
+        )}
+        <button className="btn sm ghost" disabled={busy} onClick={() => void refresh()} title="重新检测本机局域网 IP">
+          <Icon name="refresh" size={12} /> 刷新地址
+        </button>
+      </div>
+
+      {status?.error && (
+        <div className="error-box" style={{ marginTop: 8 }}>
+          {status.error}
+        </div>
+      )}
+
+      {status?.running && (
+        <div style={{ marginTop: 10 }}>
+          <div className="hint" style={{ marginBottom: 4, fontWeight: 500, color: 'var(--fg-muted)' }}>
+            iPad / 手机 Safari 打开以下局域网地址（同一 Wi-Fi）：
+          </div>
+          {status.urls.length > 0 ? (
+            status.urls.map((u, idx) => (
+              <div className="lan-url-row" key={u.url}>
+                <code className="lan-url-code">{u.url}</code>
+                <span className="hint" style={{ fontSize: 11.5 }}>
+                  {u.name}
+                  {idx === 0 ? '（推荐）' : ''}
+                </span>
+                <div className="spacer" />
+                <button className="btn sm" onClick={() => void copyUrl(u.url)}>
+                  {copiedUrl === u.url ? '✓ 已复制' : '复制'}
+                </button>
+              </div>
+            ))
+          ) : (
+            <div className="hint">未检测到局域网 IPv4 地址，请确认电脑已连接 Wi-Fi 或以太网后点击「刷新地址」。</div>
+          )}
+
+          <div className="row" style={{ marginTop: 8, gap: 8, flexWrap: 'wrap' }}>
+            {!loggedInUser ? (
+              <button className="btn sm primary" onClick={() => onUseLocalServer(status.localUrl)}>
+                一键填入本机同步地址（{status.localUrl}）
+              </button>
+            ) : connectedToLan ? (
+              <span className="hint" style={{ color: 'var(--success)' }}>
+                ✓ 本机已连接局域网同步，iPad 打开上方地址登录 @{loggedInUser} 即可实时互通
+              </span>
+            ) : (
+              <span className="hint">
+                当前本机已登录外部同步服务（{currentServerUrl}）；若需改用纯局域网同步，可先退出下方账号再接入 {status.localUrl}。
+              </span>
+            )}
+          </div>
+
+          <div className="hint" style={{ marginTop: 6, lineHeight: 1.55 }}>
+            提示：首次开启如 Windows 防火墙弹窗，请勾选「专用网络」并允许访问；iPad 登录同步后会自动复用本机代理（含 Clash/VPN），无需单独配代理。
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function SyncSection({ onOpenSection }: { onOpenSection: (s: SettingsSection) => void }) {
   const sync = useSync();
+  const webCryptoOk = hasWebCryptoSubtle();
   const hasProviderDraft = useSettingsDraft((s) => !!s.editingProvider);
   const proxyToken = useSettings((s) => s.proxyToken);
   const draft = useSettingsDraft((s) => s.syncDraft);
@@ -1073,13 +1253,15 @@ function SyncSection({ onOpenSection }: { onOpenSection: (s: SettingsSection) =>
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState('');
 
-  const testServer = async () => {
+  const testServer = async (targetUrl?: string) => {
+    const raw = (targetUrl ?? serverInput).trim();
+    if (!raw) return;
     setBusy(true);
     setMsg('');
     try {
-      const info = await checkSyncServer(serverInput);
+      const info = await checkSyncServer(raw);
       setServerInfo(info);
-      sync.set({ serverUrl: serverInput.trim().replace(/\/+$/, '') });
+      sync.set({ serverUrl: raw.replace(/\/+$/, '') });
       setMsg(`✓ 已连接同步服务（${info.allowRegister ? (info.inviteRequired ? '需要邀请码注册' : '开放注册') : '仅支持已有账号登录'}）`);
     } catch (e) {
       setServerInfo(null);
@@ -1087,6 +1269,11 @@ function SyncSection({ onOpenSection }: { onOpenSection: (s: SettingsSection) =>
     } finally {
       setBusy(false);
     }
+  };
+
+  const useLocalLanServer = (localUrl: string) => {
+    setServerInput(localUrl);
+    void testServer(localUrl);
   };
 
   const submitAuth = async () => {
@@ -1111,6 +1298,8 @@ function SyncSection({ onOpenSection }: { onOpenSection: (s: SettingsSection) =>
   if (sync.token && sync.username) {
     return (
       <>
+        <LanShareCard currentServerUrl={sync.serverUrl} loggedInUser={sync.username} onUseLocalServer={useLocalLanServer} />
+
         <div className="sync-card">
           <div className="row">
             <span className="sync-avatar">
@@ -1149,7 +1338,11 @@ function SyncSection({ onOpenSection }: { onOpenSection: (s: SettingsSection) =>
         <label className="check">
           <input type="checkbox" checked={sync.syncSettings} onChange={(e) => sync.set({ syncSettings: e.target.checked })} />
           端到端加密同步 API 配置与偏好
-          <span className="hint">使用账号密码在本地 AES-256-GCM 加密后上传，换设备登录即用</span>
+          <span className="hint">
+            {webCryptoOk
+              ? '使用账号密码在本地 AES-256-GCM 加密后上传，换设备登录即用'
+              : '当前为局域网 HTTP 连接，浏览器禁用 WebCrypto 加密；文献、PDF、笔记与手写仍正常同步，API Key 请在当前设备「API 服务」中单独配置'}
+          </span>
         </label>
 
         <div className="hint" style={{ margin: '8px 0 12px', lineHeight: 1.6 }}>
@@ -1186,6 +1379,8 @@ function SyncSection({ onOpenSection }: { onOpenSection: (s: SettingsSection) =>
 
   return (
     <>
+      <LanShareCard currentServerUrl={serverInput} loggedInUser="" onUseLocalServer={useLocalLanServer} />
+
       <div style={{ fontWeight: 600, marginBottom: 4 }}>网页 · 电脑 · iPadOS 多端云同步</div>
       <div className="hint" style={{ marginBottom: 14, lineHeight: 1.6 }}>
         在网页版、Windows 桌面客户端和 iPadOS 平板（Safari 或「添加到主屏幕」）登录同一个账号，即可自动共享全部文献、PDF、多级分类、彩色标签、笔记、阅读进度与加密后的 API 配置。

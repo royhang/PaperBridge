@@ -1,5 +1,6 @@
 import { db, type ChatRecord, type Collection, type DocRecord, type GlossaryEntry, type InkStroke, type NoteRecord, type TranslationRecord } from '../db/db';
 import { desktop } from '../lib/desktop';
+import { hasWebCryptoSubtle } from '../lib/sha256';
 import { useSettings, type Settings } from '../store/settings';
 import { emptyDirty, emptyTombstones, useSync, type DirtyMap, type SyncTable, type TombstoneMap, type TombstoneTable } from '../store/sync';
 
@@ -37,6 +38,7 @@ function fromB64(b64: string): Uint8Array<ArrayBuffer> {
 
 /** Derive a deterministic 256-bit AES key from account username + password for E2E settings encryption. */
 export async function deriveKeyB64(username: string, password: string): Promise<string> {
+  if (!hasWebCryptoSubtle()) return '';
   const enc = new TextEncoder();
   const baseKey = await crypto.subtle.importKey('raw', enc.encode(password), 'PBKDF2', false, ['deriveBits']);
   const bits = await crypto.subtle.deriveBits(
@@ -48,6 +50,7 @@ export async function deriveKeyB64(username: string, password: string): Promise<
 }
 
 export async function encryptPayload(data: unknown, keyB64: string): Promise<string> {
+  if (!hasWebCryptoSubtle() || !keyB64) return '';
   const key = await crypto.subtle.importKey('raw', fromB64(keyB64), 'AES-GCM', false, ['encrypt']);
   const iv = crypto.getRandomValues(new Uint8Array(new ArrayBuffer(12)));
   const pt = new TextEncoder().encode(JSON.stringify(data));
@@ -56,6 +59,7 @@ export async function encryptPayload(data: unknown, keyB64: string): Promise<str
 }
 
 export async function decryptPayload<T>(packed: string, keyB64: string): Promise<T | null> {
+  if (!hasWebCryptoSubtle() || !keyB64) return null;
   try {
     const [ver, ivB64, ctB64] = packed.split(':');
     if (ver !== 'v1' || !ivB64 || !ctB64) return null;

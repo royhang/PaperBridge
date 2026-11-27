@@ -1,7 +1,7 @@
 {
   "name": "paperbridge",
   "private": true,
-  "version": "0.7.3",
+  "version": "0.8.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -16,6 +16,7 @@
     "sync": "node sync/server.mjs",
     "test:sync": "node --test sync/test.mjs",
     "test:docker": "node --test docker/test.mjs",
+    "test:lan": "node --test desktop/test.mjs",
     "desktop": "pnpm build && pnpm -C desktop start",
     "desktop:win": "pnpm build && pnpm -C desktop dist:win",
     "desktop:linux": "pnpm build && pnpm -C desktop dist:linux",

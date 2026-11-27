@@ -1,4 +1,4 @@
-// Exposes the built-in proxy address / token, app info and "open with" files to the page
+// Exposes the built-in proxy address / token, app info, LAN share controls, and "open with" files to the page
 // (window.paperbridgeDesktop).
 const { contextBridge, ipcRenderer } = require('electron');
 
@@ -20,5 +20,10 @@ contextBridge.exposeInMainWorld('paperbridgeDesktop', {
         ipcRenderer.send('paperbridge:connector-res', { id, ok: false, error: e instanceof Error ? e.message : String(e) });
       }
     });
+  },
+  /** Built-in LAN share server (Web SPA + Sync + Proxy on 0.0.0.0:<port>) for iPadOS / mobile */
+  lanShare: {
+    getStatus: () => ipcRenderer.invoke('paperbridge:lan-status'),
+    configure: (opts) => ipcRenderer.invoke('paperbridge:lan-configure', opts),
   },
 });
