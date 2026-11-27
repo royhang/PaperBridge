@@ -1489,7 +1489,7 @@ function Sidebar({
               }
             }}
           >
-            删除分类（保留文献）
+            删除分类（保存文献）
           </button>
           <button
             className="ctx-item danger"
@@ -1508,7 +1508,7 @@ function Sidebar({
               }
             }}
           >
-            删除分类与文献（移入回收站）
+            删除分类（删除文献）
           </button>
         </div>
       )}
