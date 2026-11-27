@@ -17,7 +17,7 @@
  *   MAX_SYNC_MB=64        max JSON merge payload size
  */
 import { createHash, randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
-import { createReadStream, createWriteStream, existsSync, mkdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { createReadStream, createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -351,6 +351,78 @@ async function readJsonBody(req, maxBytes) {
   }
 }
 
+/**
+ * Garbage-collect unreferenced PDF blobs (and stale aborted .tmp uploads) from dataDir/blobs.
+ * Scans every user's state file first; if any user state fails to read/parse, aborts safely
+ * without deleting anything. Keeps a grace window (default 10 min) so freshly uploaded blobs
+ * not yet committed to a user's state are never removed.
+ */
+export function gcOrphanBlobs(dataDir, opts = {}) {
+  const usersDir = join(dataDir, 'users');
+  const blobsDir = join(dataDir, 'blobs');
+  const graceMs = Math.max(0, Number(opts.graceMs ?? 600_000));
+  const now = opts.now ?? Date.now();
+  if (!existsSync(blobsDir)) return { removed: 0, freedBytes: 0, referenced: 0, aborted: false };
+
+  const referenced = new Set();
+  if (existsSync(usersDir)) {
+    for (const name of readdirSync(usersDir)) {
+      if (!name.endsWith('.json')) continue;
+      try {
+        const st = JSON.parse(readFileSync(join(usersDir, name), 'utf8'));
+        for (const doc of Object.values(st?.docs ?? {})) {
+          if (doc && typeof doc.hash === 'string' && HASH_RE.test(doc.hash)) {
+            referenced.add(doc.hash);
+          }
+        }
+      } catch {
+        // Safety first: never delete blobs if any user state cannot be read cleanly
+        return { removed: 0, freedBytes: 0, referenced: referenced.size, aborted: true };
+      }
+    }
+  }
+
+  let removed = 0;
+  let freedBytes = 0;
+  const tmpGraceMs = Math.max(graceMs, 60_000);
+  for (const name of readdirSync(blobsDir)) {
+    const full = join(blobsDir, name);
+    let st;
+    try {
+      st = statSync(full);
+    } catch {
+      continue;
+    }
+    if (!st.isFile()) continue;
+
+    if (name.endsWith('.tmp')) {
+      if (now - st.mtimeMs >= tmpGraceMs) {
+        try {
+          unlinkSync(full);
+          removed++;
+          freedBytes += st.size;
+        } catch {
+          /* ignore race */
+        }
+      }
+      continue;
+    }
+
+    if (!HASH_RE.test(name)) continue;
+    if (referenced.has(name)) continue;
+    if (now - st.mtimeMs < graceMs) continue;
+
+    try {
+      unlinkSync(full);
+      removed++;
+      freedBytes += st.size;
+    } catch {
+      /* ignore race */
+    }
+  }
+  return { removed, freedBytes, referenced: referenced.size, aborted: false };
+}
+
 export function createSyncServer(opts = {}) {
   const env = opts.env ?? process.env;
   const dataDir = resolve(opts.dataDir ?? env.SYNC_DATA_DIR ?? './sync-data');
@@ -362,10 +434,33 @@ export function createSyncServer(opts = {}) {
   const sharedProxyToken = (env.PROXY_TOKEN ?? '').trim();
   const maxPdfBytes = Math.max(1, Number(env.MAX_PDF_MB) || 150) * 1024 * 1024;
   const maxSyncBytes = Math.max(1, Number(env.MAX_SYNC_MB) || 64) * 1024 * 1024;
+  const gcGraceMs = env.BLOB_GC_GRACE_MS !== undefined ? Math.max(0, Number(env.BLOB_GC_GRACE_MS)) : 600_000;
+  const gcDelayMs = env.BLOB_GC_DELAY_MS !== undefined ? Math.max(0, Number(env.BLOB_GC_DELAY_MS)) : 2_000;
   const proxyHint = sharedProxyToken ? { proxy: { token: sharedProxyToken } } : {};
 
   mkdirSync(usersDir, { recursive: true });
   mkdirSync(blobsDir, { recursive: true });
+
+  let gcTimer = null;
+  const runGcNow = () => {
+    const r = gcOrphanBlobs(dataDir, { graceMs: gcGraceMs });
+    if (r.removed > 0) {
+      console.log(`[sync-gc] removed ${r.removed} orphan file(s), freed ${(r.freedBytes / 1048576).toFixed(2)} MB`);
+    }
+    return r;
+  };
+  const scheduleGc = () => {
+    if (gcTimer) return;
+    gcTimer = setTimeout(() => {
+      gcTimer = null;
+      runGcNow();
+    }, gcDelayMs);
+    gcTimer.unref?.();
+  };
+  const startupGc = setTimeout(runGcNow, 15_000);
+  startupGc.unref?.();
+  const periodicGc = setInterval(runGcNow, 3_600_000);
+  periodicGc.unref?.();
 
   // Per-user async queue to serialize state merges cleanly
   const locks = new Map();
@@ -404,7 +499,7 @@ export function createSyncServer(opts = {}) {
     return raw;
   }
 
-  return createServer(async (req, res) => {
+  const server = createServer(async (req, res) => {
     if (req.method === 'OPTIONS') {
       res.writeHead(204, corsHeaders());
       res.end();
@@ -614,9 +709,15 @@ export function createSyncServer(opts = {}) {
         const baseRev = Number(payload.baseRevision ?? 0) || 0;
         const result = await withUserLock(session.username, () => {
           const cur = loadState(session.username);
+          const prevDocCount = Object.keys(cur.docs ?? {}).length;
           const hadRevs = !!(cur.revs && typeof cur.revsInitRev === 'number');
           const { state: merged, changed } = mergeStates(cur, payload);
-          if (changed) saveState(session.username, merged);
+          if (changed) {
+            saveState(session.username, merged);
+            if (Object.keys(merged.docs ?? {}).length < prevDocCount || Object.keys(payload?.deleted?.docs ?? {}).length > 0) {
+              scheduleGc();
+            }
+          }
           const neededHashes = new Set();
           for (const d of Object.values(merged.docs)) {
             if (d?.hasPdf && typeof d.hash === 'string' && HASH_RE.test(d.hash) && !existsSync(blobPath(d.hash))) {
@@ -732,6 +833,12 @@ export function createSyncServer(opts = {}) {
       if (!res.headersSent) sendJson(res, status, { error: e instanceof Error ? e.message : String(e) });
     }
   });
+  server.on('close', () => {
+    if (gcTimer) clearTimeout(gcTimer);
+    clearTimeout(startupGc);
+    clearInterval(periodicGc);
+  });
+  return server;
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

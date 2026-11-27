@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { gzipSync } from 'node:zlib';
-import { createSyncServer } from './server.mjs';
+import { createSyncServer, gcOrphanBlobs } from './server.mjs';
 
 async function start(env = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'pb-sync-test-'));
@@ -213,6 +213,91 @@ test('auth register/login, LWW + tombstone merge, encrypted settings, and per-us
     assert.equal(d1Pull.revision, baseRev + 1);
     assert.equal(d1Pull.state.inks.ink1.layer, 'translated');
     assert.equal(Object.keys(d1Pull.state.docs).length, 0);
+  } finally {
+    await srv.close();
+  }
+});
+
+test('orphan PDF blob GC preserves shared blobs and deletes unreferenced blobs after permanent deletion', async () => {
+  const srv = await start({ BLOB_GC_GRACE_MS: '0', BLOB_GC_DELAY_MS: '20' });
+  try {
+    const regA = await (
+      await fetch(`${srv.base}/api/auth/register`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: 'usera', password: 'password123' }),
+      })
+    ).json();
+    const regB = await (
+      await fetch(`${srv.base}/api/auth/register`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: 'userb', password: 'password123' }),
+      })
+    ).json();
+
+    const pdfBytes = Buffer.from('%PDF-1.4\n%shared-blob-for-gc\n%%EOF');
+    const hash = createHash('sha256').update(pdfBytes).digest('hex');
+
+    // Both userA and userB reference the same deduplicated PDF hash
+    for (const tok of [regA.token, regB.token]) {
+      await fetch(`${srv.base}/api/sync/merge`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${tok}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ docs: { d1: { id: 'd1', title: 'Shared', hasPdf: true, hash, addedAt: 100, updatedAt: 100 } }, deleted: {} }),
+      });
+    }
+    const putRes = await fetch(`${srv.base}/api/blobs/${hash}`, {
+      method: 'PUT',
+      headers: { Authorization: `Bearer ${regA.token}`, 'Content-Type': 'application/pdf' },
+      body: pdfBytes,
+    });
+    assert.equal(putRes.status, 201);
+
+    // UserA permanently deletes d1 -> blob MUST stay because userB still references it
+    await fetch(`${srv.base}/api/sync/merge`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${regA.token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ docs: {}, deleted: { docs: { d1: 200 } } }),
+    });
+    await new Promise((r) => setTimeout(r, 60));
+    const headStillThere = await fetch(`${srv.base}/api/blobs/${hash}`, {
+      method: 'HEAD',
+      headers: { Authorization: `Bearer ${regB.token}` },
+    });
+    assert.equal(headStillThere.status, 200);
+
+    // UserB also permanently deletes d1 -> blob becomes an orphan and auto-GC removes it
+    await fetch(`${srv.base}/api/sync/merge`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${regB.token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ docs: {}, deleted: { docs: { d1: 300 } } }),
+    });
+    await new Promise((r) => setTimeout(r, 80));
+    const headGone = await fetch(`${srv.base}/api/blobs/${hash}`, {
+      method: 'HEAD',
+      headers: { Authorization: `Bearer ${regB.token}` },
+    });
+    assert.equal(headGone.status, 404);
+    assert.equal(typeof gcOrphanBlobs, 'function');
+  } finally {
+    await srv.close();
+  }
+});
+
+test('ALLOW_REGISTER=0 blocks new signups while keeping health check accurate', async () => {
+  const srv = await start({ ALLOW_REGISTER: '0' });
+  try {
+    const h = await (await fetch(`${srv.base}/api/health`)).json();
+    assert.equal(h.ok, true);
+    assert.equal(h.allowRegister, false);
+
+    const reg = await fetch(`${srv.base}/api/auth/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: 'stranger', password: 'password123' }),
+    });
+    assert.equal(reg.status, 403);
   } finally {
     await srv.close();
   }
