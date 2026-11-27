@@ -10,6 +10,7 @@ import {
   addToCollection,
   createCollection,
   deleteCollection,
+  deleteCollectionAndDocs,
   emptyTrash,
   findDuplicateGroups,
   flattenCollectionTree,
@@ -1442,7 +1443,7 @@ function Sidebar({
       {colMenu && (
         <div
           className="ctx-menu"
-          style={{ left: Math.max(8, Math.min(colMenu.x, window.innerWidth - 216)), top: Math.max(8, Math.min(colMenu.y, window.innerHeight - 190)) }}
+          style={{ left: Math.max(8, Math.min(colMenu.x, window.innerWidth - 236)), top: Math.max(8, Math.min(colMenu.y, window.innerHeight - 236)) }}
           onMouseDown={(e) => e.stopPropagation()}
           onContextMenu={(e) => e.preventDefault()}
         >
@@ -1482,12 +1483,32 @@ function Sidebar({
               const target = colMenu.col;
               setColMenu(null);
               if (confirm(`删除分类「${target.name}」及其子分类？其中的文献不会被删除。`)) {
+                const desc = getDescendantCollectionIds(collections, target.id);
                 void deleteCollection(target.id);
-                if (view.kind === 'collection' && view.id === target.id) setView({ kind: 'all' });
+                if (view.kind === 'collection' && view.id && desc.has(view.id)) setView({ kind: 'all' });
               }
             }}
           >
             删除分类（保留文献）
+          </button>
+          <button
+            className="ctx-item danger"
+            onClick={() => {
+              const target = colMenu.col;
+              const count = colCounts.get(target.id) ?? 0;
+              setColMenu(null);
+              const tip =
+                count > 0
+                  ? `删除分类「${target.name}」（含子分类）并将其中 ${count} 篇文献一并移入回收站？\n（可在回收站还原，或在回收站彻底清空以释放空间）`
+                  : `删除分类「${target.name}」及其子分类？`;
+              if (confirm(tip)) {
+                const desc = getDescendantCollectionIds(collections, target.id);
+                void deleteCollectionAndDocs(target.id);
+                if (view.kind === 'collection' && view.id && desc.has(view.id)) setView({ kind: 'all' });
+              }
+            }}
+          >
+            删除分类与文献（移入回收站）
           </button>
         </div>
       )}

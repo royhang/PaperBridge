@@ -4,6 +4,7 @@ import { db, type Collection, type DocRecord } from '../../db/db';
 import {
   createCollection,
   deleteCollection,
+  deleteCollectionAndDocs,
   emptyTrash,
   findDuplicateGroups,
   flattenCollectionTree,
@@ -75,6 +76,29 @@ describe('Zotero library organization (nested collections, trash, duplicates)', 
     await deleteCollection(root.id);
     expect(await db.collections.count()).toBe(0);
     expect((await db.docs.get('d1'))?.collectionIds).toEqual([]);
+  });
+
+  it('deleteCollectionAndDocs removes nested collections and moves their docs to trash without affecting siblings', async () => {
+    const target = await createCollection('Target');
+    const sub = await createCollection('Sub', target.id);
+    const keep = await createCollection('Keep');
+
+    await db.docs.bulkAdd([
+      makeDoc('d1', { collectionIds: [target.id] }),
+      makeDoc('d2', { collectionIds: [sub.id] }),
+      makeDoc('d3', { collectionIds: [keep.id] }),
+    ]);
+
+    const trashed = await deleteCollectionAndDocs(target.id);
+    expect(trashed).toBe(2);
+    expect(await db.collections.get(target.id)).toBeUndefined();
+    expect(await db.collections.get(sub.id)).toBeUndefined();
+    expect(await db.collections.get(keep.id)).toBeDefined();
+    expect((await db.docs.get('d1'))?.deletedAt).toBeTypeOf('number');
+    expect((await db.docs.get('d2'))?.deletedAt).toBeTypeOf('number');
+    expect((await db.docs.get('d2'))?.collectionIds).toEqual([]);
+    expect((await db.docs.get('d3'))?.deletedAt).toBeUndefined();
+    expect((await db.docs.get('d3'))?.collectionIds).toEqual([keep.id]);
   });
 
   it('soft-deletes to trash, restores, and empties trash cleanly', async () => {

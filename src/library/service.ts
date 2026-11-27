@@ -730,6 +730,26 @@ export async function deleteCollection(id: string) {
   });
 }
 
+/** Delete a collection (and all nested sub-collections) AND move all papers inside them to Trash. */
+export async function deleteCollectionAndDocs(id: string): Promise<number> {
+  const all = await db.collections.toArray();
+  const toDelete = getDescendantCollectionIds(all, id);
+  const affected = await db.docs.filter((d) => d.collectionIds.some((c) => toDelete.has(c))).toArray();
+  for (const d of affected) useTabs.getState().closeTab(d.id);
+  const now = Date.now();
+  await db.transaction('rw', db.docs, db.collections, async () => {
+    for (const cid of toDelete) await db.collections.delete(cid);
+    await db.docs
+      .filter((d) => d.collectionIds.some((c) => toDelete.has(c)))
+      .modify((d) => {
+        d.collectionIds = d.collectionIds.filter((c) => !toDelete.has(c));
+        d.deletedAt = now;
+        d.updatedAt = now;
+      });
+  });
+  return affected.filter((d) => !d.deletedAt).length;
+}
+
 export async function renameTag(from: string, to: string) {
   const name = to.trim();
   await db.docs
