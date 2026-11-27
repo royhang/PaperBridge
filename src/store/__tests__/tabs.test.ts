@@ -76,5 +76,12 @@ describe('useTabs workspace tab store', () => {
     st.pruneMissing(new Set());
     expect(useTabs.getState().tabs).toEqual([]);
     expect(useTabs.getState().active).toEqual({ kind: 'library' });
+    expect(useTabs.getState().lastDocId).toBeNull();
+  });
+
+  it('clears stale lastDocId even when tabs array is already empty', () => {
+    useTabs.setState({ tabs: [], active: { kind: 'library' }, lastDocId: 'trashed-doc', pendingPage: null });
+    useTabs.getState().pruneMissing(new Set(['alive-doc']));
+    expect(useTabs.getState().lastDocId).toBeNull();
   });
 });

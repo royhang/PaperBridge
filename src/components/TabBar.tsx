@@ -50,10 +50,10 @@ export function TabBar() {
 
   const docMap = useMemo(() => new Map((docs ?? []).map((d) => [d.id, d])), [docs]);
 
-  // Automatically close tabs whose document was deleted from IndexedDB
+  // Automatically close tabs whose document was deleted or moved to trash (locally or via cloud sync)
   useEffect(() => {
     if (!docs) return;
-    pruneMissing(new Set(docs.map((d) => d.id)));
+    pruneMissing(new Set(docs.filter((d) => !d.deletedAt).map((d) => d.id)));
   }, [docs, pruneMissing]);
 
   // Keep active tab scrolled into view

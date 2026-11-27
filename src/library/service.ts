@@ -1,4 +1,5 @@
 import { db, deleteDocument, sha256Hex, uid, type Collection, type DocRecord, type ReadStatus } from '../db/db';
+import { useTabs } from '../store/tabs';
 import { openPdf, readTitle, type PDFDocumentProxy } from '../pdf/loader';
 import { useSettings } from '../store/settings';
 import { parseBibTeX } from './bibtex';
@@ -519,12 +520,18 @@ export async function patchDocs(ids: string[], patch: (d: DocRecord) => Partial<
 
 export const setStatus = (ids: string[], status: ReadStatus) => patchDocs(ids, () => ({ status }));
 export const setStarred = (ids: string[], starred: boolean) => patchDocs(ids, () => ({ starred }));
-export const trashDocs = (ids: string[]) => patchDocs(ids, () => ({ deletedAt: Date.now() }));
+export const trashDocs = async (ids: string[]) => {
+  for (const id of ids) useTabs.getState().closeTab(id);
+  await patchDocs(ids, () => ({ deletedAt: Date.now() }));
+};
 export const restoreDocs = (ids: string[]) => patchDocs(ids, () => ({ deletedAt: undefined }));
 
 export async function emptyTrash(): Promise<number> {
   const trashed = await db.docs.filter((d) => !!d.deletedAt).primaryKeys();
-  for (const id of trashed) await deleteDocument(id);
+  for (const id of trashed) {
+    useTabs.getState().closeTab(id);
+    await deleteDocument(id);
+  }
   return trashed.length;
 }
 

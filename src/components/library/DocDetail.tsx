@@ -163,29 +163,30 @@ export function DocDetail({ doc, onClose }: { doc: DocRecord; onClose: () => voi
           ))}
         </select>
         <div className="spacer" />
-        {doc.hasPdf ? (
-          <button
-            className="btn sm primary"
-            onClick={(e) => openDocTab(doc.id, { title: doc.title, background: e.ctrlKey || e.metaKey })}
-            title="在标签页打开阅读（Ctrl+点击在后台打开）"
-          >
-            <Icon name="book" size={13} /> {isOpenInTab ? '切换标签' : '阅读'}
-          </button>
-        ) : (
-          <button
-            className="btn sm primary"
-            disabled={!!busy || (!doc.meta.doi && !doc.meta.arxivId && !doc.meta.url)}
-            onClick={() =>
-              void run('获取 PDF', async () =>
-                (await fetchPdfForDoc(doc.id, undefined, (m) => setBusy(`获取 PDF：${m}`)))
-                  ? '已获取 PDF'
-                  : '没有找到可直接下载的开放获取 PDF，请手动附加。',
-              )
-            }
-          >
-            获取 PDF
-          </button>
-        )}
+        {!doc.deletedAt &&
+          (doc.hasPdf ? (
+            <button
+              className="btn sm primary"
+              onClick={(e) => openDocTab(doc.id, { title: doc.title, background: e.ctrlKey || e.metaKey })}
+              title="在标签页打开阅读（Ctrl+点击在后台打开）"
+            >
+              <Icon name="book" size={13} /> {isOpenInTab ? '切换标签' : '阅读'}
+            </button>
+          ) : (
+            <button
+              className="btn sm primary"
+              disabled={!!busy || (!doc.meta.doi && !doc.meta.arxivId && !doc.meta.url)}
+              onClick={() =>
+                void run('获取 PDF', async () =>
+                  (await fetchPdfForDoc(doc.id, undefined, (m) => setBusy(`获取 PDF：${m}`)))
+                    ? '已获取 PDF'
+                    : '没有找到可直接下载的开放获取 PDF，请手动附加。',
+                )
+              }
+            >
+              获取 PDF
+            </button>
+          ))}
         <button className="icon-btn sm-ico" title="关闭 (Esc)" onClick={onClose}>
           <Icon name="close" size={15} />
         </button>

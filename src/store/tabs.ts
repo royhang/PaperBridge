@@ -238,6 +238,11 @@ export const useTabs = create<TabsStore>()(
       pruneMissing: (existingIds) => {
         const missing = get().tabs.filter((t) => !existingIds.has(t.docId));
         for (const t of missing) get().closeTab(t.docId);
+        const last = get().lastDocId;
+        if (last && !existingIds.has(last)) {
+          releaseWarmPdf(last);
+          set({ lastDocId: null });
+        }
       },
 
       consumePendingPage: (docId) => {

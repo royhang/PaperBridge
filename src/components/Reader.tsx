@@ -34,7 +34,10 @@ export function Reader({ docId, active = true }: { docId: string; active?: boole
     let freshTask: PDFLoadingTask | null = null;
     (async () => {
       const doc = await db.docs.get(docId);
-      if (!doc) throw new Error('文献不存在或已被删除');
+      if (!doc || doc.deletedAt) {
+        useTabs.getState().closeTab(docId);
+        return;
+      }
       let loaded = getWarmPdf(docId)?.pdf;
       if (!loaded) {
         let blob = await db.blobs.get(docId);
