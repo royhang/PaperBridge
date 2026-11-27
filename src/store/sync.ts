@@ -19,7 +19,13 @@ export function defaultSyncServerUrl(): string {
   if (typeof location === 'undefined') return '';
   if (location.protocol !== 'https:' && location.protocol !== 'http:') return '';
   const host = location.hostname;
-  if (host === 'localhost' || host === '127.0.0.1' || host.endsWith('.github.io')) return '';
+  if (
+    host === 'localhost' ||
+    host === '127.0.0.1' ||
+    host.endsWith('.github.io') ||
+    host === 'appassets.androidplatform.net'
+  )
+    return '';
   return location.origin;
 }
 
@@ -136,7 +142,7 @@ export const useSync = create<SyncStore>()(
     {
       name: 'paperbridge-sync-v1',
       partialize: (s) => ({
-        serverUrl: s.serverUrl,
+        serverUrl: s.serverUrl.includes('appassets.androidplatform.net') ? '' : s.serverUrl,
         username: s.username,
         token: s.token,
         encKeyB64: s.encKeyB64,
@@ -150,6 +156,11 @@ export const useSync = create<SyncStore>()(
         dirtyTombstones: s.dirtyTombstones,
         dirtySettings: s.dirtySettings,
       }),
+      onRehydrateStorage: () => (state) => {
+        if (state?.serverUrl?.includes('appassets.androidplatform.net')) {
+          state.set({ serverUrl: '' });
+        }
+      },
       merge: (persisted, current) => {
         const p = (persisted ?? {}) as Partial<SyncStore>;
         return {

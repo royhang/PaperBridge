@@ -80,6 +80,7 @@ export interface Settings {
  */
 export function defaultProxyUrl(): string {
   if (import.meta.env.DEV || typeof location === 'undefined') return 'http://127.0.0.1:8787';
+  if (location.hostname === 'appassets.androidplatform.net') return '';
   return new URL('.', location.href).href.replace(/\/+$/, '');
 }
 
