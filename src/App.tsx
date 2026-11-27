@@ -7,6 +7,7 @@ import { TabBar } from './components/TabBar';
 import { db } from './db/db';
 import { desktop } from './lib/desktop';
 import type { SettingsSection } from './lib/nav';
+import { resolveIsDark, resolvePdfTheme } from './lib/theme';
 import { importPdfBytes, saveConnectorItem, type ConnectorSavePayload } from './library/service';
 import { initAutoSync } from './services/sync';
 import { useSettings } from './store/settings';
@@ -57,18 +58,16 @@ export default function App() {
     else el.setAttribute('data-theme', theme);
     const mq = window.matchMedia?.('(prefers-color-scheme: dark)');
     const applyDerived = () => {
-      const dark = theme === 'dark' || (theme === 'system' && !!mq?.matches);
+      const dark = resolveIsDark(theme, !!mq?.matches);
       // Dark mode automatically applies eye-comfort night paper to PDFs unless user overrides
-      const resolvedPdf = pdfTheme === 'auto' ? (dark ? 'dark' : 'original') : pdfTheme;
+      const resolvedPdf = resolvePdfTheme(pdfTheme, dark);
       el.setAttribute('data-pdf-theme', resolvedPdf);
       // Keep iPadOS / iOS / Android status bar seamlessly matched to the app chrome color
       const chromeColor = dark ? '#14161a' : '#eaedf2';
       desktop()?.setChromeTheme?.(dark, chromeColor);
       document.querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]').forEach((m) => {
-        if (theme !== 'system') {
-          m.removeAttribute('media');
-          m.content = chromeColor;
-        }
+        m.removeAttribute('media');
+        m.content = chromeColor;
       });
     };
     applyDerived();

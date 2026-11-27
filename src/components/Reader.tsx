@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { db, uid, type HighlightColor } from '../db/db';
 import { inkStrokeLayer } from '../lib/ink';
+import { nextPdfTheme, resolvePdfTheme, useResolvedDark } from '../lib/theme';
 import { openPdf, type PDFLoadingTask } from '../pdf/loader';
 import { invalidateTranslations, runFullText, stopFullText } from '../services/fulltext';
 import { ensurePdfBlobDownloaded } from '../services/sync';
@@ -173,7 +174,10 @@ function Toolbar({ active }: { active: boolean }) {
   const setInkTool = useReader((s) => s.setInkTool);
   const focusMode = useReader((s) => s.focusMode);
   const toggleFocusMode = useReader((s) => s.toggleFocusMode);
+  const theme = useSettings((s) => s.theme);
   const pdfTheme = useSettings((s) => s.pdfTheme);
+  const isDark = useResolvedDark(theme);
+  const resolvedPdf = resolvePdfTheme(pdfTheme, isDark);
   const setSettings = useSettings((s) => s.set);
   const pagesDone = useReader((s) => Object.values(s.pageStates).filter((p) => p.status === 'done' || p.status === 'skipped').length);
   const running = useReader((s) => s.fullTextRunning);
@@ -309,23 +313,19 @@ function Toolbar({ active }: { active: boolean }) {
         <Icon name="edit" size={16} />
       </button>
       <button
-        className={`icon-btn${pdfTheme !== 'original' ? ' active' : ''}`}
+        className={`btn ghost sm pdf-paper-btn${pdfTheme !== 'auto' ? ' active' : ''}`}
         title={
-          pdfTheme === 'auto'
-            ? 'PDF 纸色：自动护眼（深色模式暗夜纸张，点击切换为柔光暖纸）'
-            : pdfTheme === 'dim'
-              ? 'PDF 纸色：柔光暖纸（不反色保留照片原色，点击切换为深色反色）'
-              : pdfTheme === 'dark'
-                ? 'PDF 纸色：暗夜反色（点击切换为原始白底）'
-                : 'PDF 纸色：原始白底（点击恢复自动护眼）'
+          resolvedPdf === 'original'
+            ? 'PDF 纸色：原始白底（点击切换为柔光暖纸）'
+            : resolvedPdf === 'dim'
+              ? 'PDF 纸色：柔光暖纸（保留照片原色，点击切换为暗夜反色）'
+              : 'PDF 纸色：暗夜反色（点击切换为原始白底）'
         }
-        onClick={() => {
-          const order = ['auto', 'dim', 'dark', 'original'] as const;
-          const next = order[(order.indexOf(pdfTheme) + 1) % order.length];
-          setSettings({ pdfTheme: next });
-        }}
+        aria-label="切换 PDF 纸色"
+        onClick={() => setSettings({ pdfTheme: nextPdfTheme(pdfTheme, isDark) })}
       >
-        <Icon name={pdfTheme === 'original' ? 'sun' : 'moon'} size={15} />
+        <Icon name={resolvedPdf === 'original' ? 'sun' : resolvedPdf === 'dim' ? 'half' : 'moon'} size={14} />
+        <span className="hide-sm">{resolvedPdf === 'original' ? '白底' : resolvedPdf === 'dim' ? '暖纸' : '暗夜'}</span>
       </button>
       <button
         className={`icon-btn${focusMode ? ' active' : ''}`}

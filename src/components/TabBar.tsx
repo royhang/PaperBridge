@@ -4,6 +4,7 @@ import { db } from '../db/db';
 import { authorsShort } from '../library/format';
 import { desktop } from '../lib/desktop';
 import { openSettings } from '../lib/nav';
+import { toggleAppTheme, useResolvedDark, useSystemDark } from '../lib/theme';
 import { syncNow } from '../services/sync';
 import { checkForUpdates, type UpdateInfo } from '../services/update';
 import { useReader } from '../store/reader';
@@ -26,6 +27,8 @@ export function TabBar() {
   const pruneMissing = useTabs((s) => s.pruneMissing);
   const runningDocId = useReader((s) => (s.fullTextRunning ? s.docId : null));
   const theme = useSettings((s) => s.theme);
+  const sysDark = useSystemDark();
+  const isDark = useResolvedDark(theme);
   const setSettings = useSettings((s) => s.set);
   const syncUser = useSync((s) => s.username);
   const syncToken = useSync((s) => s.token);
@@ -313,10 +316,11 @@ export function TabBar() {
         )}
         <button
           className="icon-btn tabbar-btn"
-          title={`切换主题（当前：${theme === 'dark' ? '深色' : theme === 'light' ? '浅色' : '跟随系统'}）`}
-          onClick={() => setSettings({ theme: theme === 'dark' ? 'light' : theme === 'light' ? 'system' : 'dark' })}
+          title={isDark ? '切换为浅色模式（当前：深色）' : '切换为深色模式（当前：浅色）'}
+          aria-label={isDark ? '切换为浅色模式' : '切换为深色模式'}
+          onClick={() => setSettings({ theme: toggleAppTheme(theme, sysDark), pdfTheme: 'auto' })}
         >
-          <Icon name={theme === 'dark' ? 'moon' : 'sun'} size={15} />
+          <Icon name={isDark ? 'moon' : 'sun'} size={15} />
         </button>
         <button className="icon-btn tabbar-btn" title="设置" onClick={() => openSettings('providers')}>
           <Icon name="settings" size={15} />

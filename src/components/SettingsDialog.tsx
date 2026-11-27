@@ -1649,6 +1649,7 @@ function ProxySection({ onOpenSection }: { onOpenSection: (s: SettingsSection) =
 
 function GeneralSection() {
   const theme = useSettings((s) => s.theme);
+  const pdfTheme = useSettings((s) => s.pdfTheme);
   const fontSize = useSettings((s) => s.readerFontSize);
   const set = useSettings((s) => s.set);
   const d = desktop();
@@ -1665,10 +1666,19 @@ function GeneralSection() {
     <>
       <div className="field">
         <label>主题</label>
-        <select className="select" value={theme} onChange={(e) => set({ theme: e.target.value as typeof theme })}>
+        <select className="select" value={theme} onChange={(e) => set({ theme: e.target.value as typeof theme, pdfTheme: 'auto' })}>
           <option value="system">跟随系统</option>
           <option value="light">浅色</option>
           <option value="dark">深色</option>
+        </select>
+      </div>
+      <div className="field">
+        <label>PDF 纸色</label>
+        <select className="select" value={pdfTheme} onChange={(e) => set({ pdfTheme: e.target.value as typeof pdfTheme })}>
+          <option value="auto">跟随主题（深色自动暗夜纸张）</option>
+          <option value="original">原始白底</option>
+          <option value="dim">柔光暖纸（保留图片原色）</option>
+          <option value="dark">暗夜反色</option>
         </select>
       </div>
       <div className="field">
