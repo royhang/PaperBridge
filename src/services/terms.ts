@@ -4,7 +4,7 @@
  * entries (editable in the 术语 panel) and every later request of the document uses them, so a term is
  * translated the same way on page 1 and page 12.
  */
-import { db, type GlossaryEntry } from '../db/db';
+import { db, uid, type GlossaryEntry } from '../db/db';
 import type { ChatMessage, LLMProvider } from '../providers/types';
 import { getSettings } from '../store/settings';
 import { getCachedTranslations, getTranslator, langLabel, stallGuard } from './translate';
@@ -90,7 +90,7 @@ export async function extractDocTerms(docId: string, sample: string, signal?: Ab
   const now = Date.now();
   const rows: GlossaryEntry[] = terms
     .filter((t) => !own.has(t.source.toLowerCase()))
-    .map((t, i) => ({ id: crypto.randomUUID(), source: t.source, target: t.target, note: AUTO_TERM_NOTE, scope: docId, createdAt: now + i }));
+    .map((t, i) => ({ id: uid(), source: t.source, target: t.target, note: AUTO_TERM_NOTE, scope: docId, createdAt: now + i }));
   if (rows.length) await db.glossary.bulkPut(rows);
   return rows.length;
 }
