@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import type { Collection } from '../../db/db';
 import { extractPdfsFromFileList, scanDataTransfer, type FolderScanResult } from '../../library/folder';
-import { importFromIdentifier, importReferencesText } from '../../library/service';
+import { flattenCollectionTree, importFromIdentifier, importReferencesText } from '../../library/service';
 import { useEscape } from '../../lib/useEscape';
 import { Icon } from '../Icon';
 
@@ -15,18 +16,22 @@ interface Line {
 
 export function ImportDialog({
   collectionId,
+  collections = [],
   onFiles,
   onFolderScan,
   onClose,
   onImported,
 }: {
   collectionId?: string;
+  collections?: Collection[];
   onFiles: (f: File[]) => void;
-  onFolderScan: (scan: Promise<FolderScanResult>) => void;
+  onFolderScan: (scan: Promise<FolderScanResult>, parentCollectionId: string | null) => void;
   onClose: () => void;
   onImported: (docId: string) => void;
 }) {
   const [tab, setTab] = useState<Tab>('pdf');
+  // Default folder import to top-level (sibling with existing folders) so uploaded folders don't accidentally nest
+  const [folderTargetId, setFolderTargetId] = useState<string>('');
   const [text, setText] = useState('');
   const [lines, setLines] = useState<Line[]>([]);
   const [running, setRunning] = useState(false);
@@ -36,6 +41,7 @@ export function ImportDialog({
   const pdfRef = useRef<HTMLInputElement>(null);
   const folderRef = useRef<HTMLInputElement>(null);
   const bibRef = useRef<HTMLInputElement>(null);
+  const colTree = useMemo(() => flattenCollectionTree(collections), [collections]);
 
   useEscape(() => !running && onClose());
   useEffect(() => () => ctrl.current?.abort(), []);
@@ -101,71 +107,93 @@ export function ImportDialog({
         </nav>
         <div className="settings-content" style={{ minHeight: 260 }}>
           {tab === 'pdf' && (
-            <div
-              className="dropzone"
-              onClick={() => pdfRef.current?.click()}
-              onDragOver={(e) => e.preventDefault()}
-              onDrop={(e) => {
-                e.preventDefault();
-                const scan = scanDataTransfer(e.dataTransfer);
-                onFolderScan(scan);
-                onClose();
-              }}
-            >
-              <Icon name="upload" size={28} />
-              <h2>拖入 PDF 或整个文献文件夹</h2>
-              <div className="hint" style={{ maxWidth: 440, lineHeight: 1.55 }}>
-                上传文件夹时仅导入其中的 PDF 文件（自动跳过其他格式），并按原目录层级保留嵌套分类结构；自动识别标题、作者、DOI / arXiv。
-              </div>
-              <div className="row" style={{ marginTop: 12, gap: 8, justifyContent: 'center', flexWrap: 'wrap' }}>
-                <button
-                  type="button"
-                  className="btn primary"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    pdfRef.current?.click();
-                  }}
-                >
-                  <Icon name="filePdf" size={14} /> 选择 PDF 文件
-                </button>
-                <button
-                  type="button"
-                  className="btn"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    folderRef.current?.click();
-                  }}
-                >
-                  <Icon name="folder" size={14} /> 选择文件夹（含子文件夹）
-                </button>
-              </div>
-              <input
-                ref={pdfRef}
-                type="file"
-                accept="application/pdf,.pdf"
-                multiple
-                hidden
-                onChange={(e) => {
-                  if (e.target.files) onFiles([...e.target.files]);
+            <>
+              {colTree.length > 0 && (
+                <div className="row" style={{ marginBottom: 10, gap: 8 }}>
+                  <label className="hint" style={{ margin: 0, whiteSpace: 'nowrap' }}>
+                    文件夹导入位置
+                  </label>
+                  <select
+                    className="select sm"
+                    style={{ flex: 1, minWidth: 0 }}
+                    value={folderTargetId}
+                    onChange={(e) => setFolderTargetId(e.target.value)}
+                  >
+                    <option value="">我的文库（顶层，与现有文件夹并列）</option>
+                    {colTree.map(({ col, depth }) => (
+                      <option key={col.id} value={col.id}>
+                        {'　'.repeat(depth)}▸ 放到「{col.name}」下（作为子文件夹）
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+              <div
+                className="dropzone"
+                onClick={() => pdfRef.current?.click()}
+                onDragOver={(e) => e.preventDefault()}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  const scan = scanDataTransfer(e.dataTransfer);
+                  onFolderScan(scan, folderTargetId || null);
                   onClose();
                 }}
-              />
-              <input
-                ref={folderRef}
-                type="file"
-                multiple
-                hidden
-                {...({ webkitdirectory: '', directory: '' } as Record<string, string>)}
-                onChange={(e) => {
-                  if (e.target.files && e.target.files.length > 0) {
-                    const scanned = extractPdfsFromFileList(e.target.files);
-                    onFolderScan(Promise.resolve(scanned));
-                  }
-                  e.target.value = '';
-                  onClose();
-                }}
-              />
-            </div>
+              >
+                <Icon name="upload" size={28} />
+                <h2>拖入 PDF 或整个文献文件夹</h2>
+                <div className="hint" style={{ maxWidth: 440, lineHeight: 1.55 }}>
+                  上传文件夹时仅导入其中的 PDF 文件（自动跳过其他格式），默认在「我的文库」顶层并列创建并保留全部子文件夹层级。
+                </div>
+                <div className="row" style={{ marginTop: 12, gap: 8, justifyContent: 'center', flexWrap: 'wrap' }}>
+                  <button
+                    type="button"
+                    className="btn primary"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      pdfRef.current?.click();
+                    }}
+                  >
+                    <Icon name="filePdf" size={14} /> 选择 PDF 文件
+                  </button>
+                  <button
+                    type="button"
+                    className="btn"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      folderRef.current?.click();
+                    }}
+                  >
+                    <Icon name="folder" size={14} /> 选择文件夹（含子文件夹）
+                  </button>
+                </div>
+                <input
+                  ref={pdfRef}
+                  type="file"
+                  accept="application/pdf,.pdf"
+                  multiple
+                  hidden
+                  onChange={(e) => {
+                    if (e.target.files) onFiles([...e.target.files]);
+                    onClose();
+                  }}
+                />
+                <input
+                  ref={folderRef}
+                  type="file"
+                  multiple
+                  hidden
+                  {...({ webkitdirectory: '', directory: '' } as Record<string, string>)}
+                  onChange={(e) => {
+                    if (e.target.files && e.target.files.length > 0) {
+                      const scanned = extractPdfsFromFileList(e.target.files);
+                      onFolderScan(Promise.resolve(scanned), folderTargetId || null);
+                    }
+                    e.target.value = '';
+                    onClose();
+                  }}
+                />
+              </div>
+            </>
           )}
           {tab === 'link' && (
             <>

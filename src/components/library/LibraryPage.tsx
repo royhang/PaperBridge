@@ -210,7 +210,7 @@ export function LibraryPage() {
     if (lastId) lib.select(lastId);
   };
 
-  const importFolderScan = async (scanPromise: Promise<FolderScanResult>) => {
+  const importFolderScan = async (scanPromise: Promise<FolderScanResult>, explicitParentId?: string | null) => {
     setBusy('正在扫描文件夹中的 PDF…');
     try {
       const scan = await scanPromise;
@@ -219,7 +219,17 @@ export function LibraryPage() {
         if (scan.ignoredCount > 0) setTimeout(() => setBusy((cur) => (cur.startsWith('未发现 PDF') ? '' : cur)), 3500);
         return;
       }
-      const parentId = lib.view.kind === 'collection' ? lib.view.id ?? null : null;
+      // Folder drops/uploads default to top-level (sibling with existing folders) unless a target parent
+      // was explicitly chosen (via ImportDialog dropdown or dropping directly onto a sidebar folder).
+      // Loose PDF drops still go into the currently open collection.
+      const parentId =
+        explicitParentId !== undefined
+          ? explicitParentId
+          : scan.hasFolders
+            ? null
+            : lib.view.kind === 'collection'
+              ? lib.view.id ?? null
+              : null;
       const summary = await importFolderPdfs(scan.items, {
         parentCollectionId: parentId,
         ignoredCount: scan.ignoredCount,
@@ -291,6 +301,7 @@ export function LibraryPage() {
           collections={collections ?? []}
           drawerOpen={drawerOpen}
           onCloseDrawer={() => setDrawerOpen(false)}
+          onDropFolder={(scan, targetColId) => void importFolderScan(scan, targetColId)}
         />
         <main
           className={`lib-main${dropOver ? ' drop-over' : ''}`}
@@ -545,8 +556,9 @@ export function LibraryPage() {
       {importOpen && (
         <ImportDialog
           collectionId={lib.view.kind === 'collection' ? lib.view.id : undefined}
+          collections={collections ?? []}
           onFiles={(f) => void importFiles(f)}
-          onFolderScan={(scan) => void importFolderScan(scan)}
+          onFolderScan={(scan, parentId) => void importFolderScan(scan, parentId)}
           onClose={() => setImportOpen(false)}
           onImported={(id) => lib.select(id)}
         />
@@ -942,6 +954,7 @@ function Sidebar({
   collections,
   drawerOpen,
   onCloseDrawer,
+  onDropFolder,
 }: {
   activeDocs: DocRecord[];
   trashedCount: number;
@@ -949,6 +962,7 @@ function Sidebar({
   collections: Collection[];
   drawerOpen: boolean;
   onCloseDrawer: () => void;
+  onDropFolder: (scan: Promise<FolderScanResult>, parentCollectionId: string | null) => void;
 }) {
   const view = useLibrary((s) => s.view);
   const rawSetView = useLibrary((s) => s.setView);
@@ -968,7 +982,9 @@ function Sidebar({
   const [editingCol, setEditingCol] = useState<string | null>(null);
   const [colMenu, setColMenu] = useState<{ col: Collection; x: number; y: number } | null>(null);
   const [tagMenu, setTagMenu] = useState<{ tag: string; x: number; y: number } | null>(null);
+  const [colFilter, setColFilter] = useState('');
   const [tagFilter, setTagFilter] = useState('');
+  const [tagsCollapsed, setTagsCollapsed] = useState(false);
   const [width, setWidth] = useState(loadSideWidth);
   const [dragging, setDragging] = useState(false);
   const startRef = useRef<{ x: number; w: number } | null>(null);
@@ -995,7 +1011,7 @@ function Sidebar({
     const move = (e: PointerEvent) => {
       const s = startRef.current;
       if (!s) return;
-      setWidth(Math.max(170, Math.min(360, s.w + (e.clientX - s.x))));
+      setWidth(Math.max(170, Math.min(440, s.w + (e.clientX - s.x))));
     };
     const up = () => setDragging(false);
     window.addEventListener('pointermove', move);
@@ -1015,10 +1031,24 @@ function Sidebar({
     }
   }, [dragging, width]);
 
-  // Build recursive tree rows respecting collapsed parent state
+  // Build recursive tree rows respecting collapsed parent state & optional quick folder search
   const tree = useMemo(() => flattenCollectionTree(collections), [collections]);
   const visibleTree = useMemo(() => {
     const parentById = new Map(collections.map((c) => [c.id, c.parentId ?? null]));
+    const fq = colFilter.trim().toLowerCase();
+    if (fq) {
+      // Keep every matching folder AND all of its ancestor folders so hierarchy context stays clear
+      const keep = new Set<string>();
+      for (const c of collections) {
+        if (!c.name.toLowerCase().includes(fq)) continue;
+        let cur: string | null = c.id;
+        while (cur && !keep.has(cur)) {
+          keep.add(cur);
+          cur = parentById.get(cur) ?? null;
+        }
+      }
+      return tree.filter((item) => keep.has(item.col.id));
+    }
     const isHidden = (id: string) => {
       let cur = parentById.get(id) ?? null;
       const seen = new Set<string>([id]);
@@ -1030,7 +1060,19 @@ function Sidebar({
       return false;
     };
     return tree.filter((item) => !isHidden(item.col.id));
-  }, [tree, collections, expandedCols]);
+  }, [tree, collections, expandedCols, colFilter]);
+
+  const anyExpandable = useMemo(() => tree.some((t) => t.hasChildren), [tree]);
+  const allCollapsed = useMemo(
+    () => anyExpandable && tree.filter((t) => t.hasChildren).every((t) => expandedCols[t.col.id] === false),
+    [tree, expandedCols, anyExpandable],
+  );
+  const toggleAllFolders = () => {
+    const targetOpen = allCollapsed;
+    for (const t of tree) {
+      if (t.hasChildren) setColExpanded(t.col.id, targetOpen);
+    }
+  };
 
   // Recursive count for each collection
   const colCounts = useMemo(() => {
@@ -1080,8 +1122,13 @@ function Sidebar({
 
   const dropOnCol = (cid: string | null) => ({
     onDragOver: (e: React.DragEvent) => {
-      if (e.dataTransfer.types.includes(DRAG_TYPE) || e.dataTransfer.types.includes(COL_DRAG_TYPE)) {
+      if (
+        e.dataTransfer.types.includes(DRAG_TYPE) ||
+        e.dataTransfer.types.includes(COL_DRAG_TYPE) ||
+        e.dataTransfer.types.includes('Files')
+      ) {
         e.preventDefault();
+        e.stopPropagation();
         setOverTarget(cid ?? '__root__');
       }
     },
@@ -1091,14 +1138,22 @@ function Sidebar({
       const docRaw = e.dataTransfer.getData(DRAG_TYPE);
       if (docRaw && cid) {
         e.preventDefault();
+        e.stopPropagation();
         void addToCollection(JSON.parse(docRaw) as string[], cid);
         return;
       }
       const colId = e.dataTransfer.getData(COL_DRAG_TYPE);
       if (colId && colId !== cid) {
         e.preventDefault();
+        e.stopPropagation();
         void moveCollection(colId, cid);
         if (cid) setColExpanded(cid, true);
+        return;
+      }
+      if (e.dataTransfer.files.length || e.dataTransfer.items?.length) {
+        e.preventDefault();
+        e.stopPropagation();
+        onDropFolder(scanDataTransfer(e.dataTransfer), cid);
       }
     },
   });
@@ -1140,15 +1195,15 @@ function Sidebar({
           <Icon name="close" size={15} />
         </button>
       </div>
-      <div className="lib-side-scroll">
-        {/* Zotero primary root: 我的文库 + nested Collection Tree directly underneath */}
+      {/* Pinned root header + quick folder filter */}
+      <div className="side-top">
         <div
           className={`side-item root-item${isActive({ kind: 'all' }) ? ' active' : ''}${overTarget === '__root__' ? ' drop' : ''}`}
           role="button"
           tabIndex={0}
           onClick={() => setView({ kind: 'all' })}
           {...dropOnCol(null)}
-          title="查看全部文献 · 将子分类拖到此处可移至顶层"
+          title="查看全部文献 · 将子分类或本地文件夹拖到此处可放到顶层"
         >
           <span className="side-ico">
             <Icon name="library" size={14} />
@@ -1157,9 +1212,21 @@ function Sidebar({
             我的文库
           </span>
           <span className="count">{activeDocs.length}</span>
+          {anyExpandable && (
+            <button
+              className="side-add"
+              title={allCollapsed ? '展开全部子分类' : '折叠全部子分类'}
+              onClick={(e) => {
+                e.stopPropagation();
+                toggleAllFolders();
+              }}
+            >
+              <Icon name={allCollapsed ? 'next' : 'down'} size={12} />
+            </button>
+          )}
           <button
             className="side-add"
-            title="新建分类"
+            title="新建顶层分类"
             onClick={(e) => {
               e.stopPropagation();
               startNewCol(null);
@@ -1169,16 +1236,37 @@ function Sidebar({
           </button>
         </div>
 
+        {collections.length >= 4 && (
+          <div className="side-col-filter">
+            <input
+              className="input sm"
+              placeholder={`筛选 ${collections.length} 个分类…`}
+              value={colFilter}
+              onChange={(e) => setColFilter(e.target.value)}
+            />
+            {colFilter && (
+              <button className="side-col-clear" onClick={() => setColFilter('')} title="清空筛选">
+                ×
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Independently scrollable collection tree */}
+      <div className="lib-side-scroll">
         {addingParent === null && renderInlineNewInput(0)}
 
         {visibleTree.map(({ col: c, depth, hasChildren }) => {
-          const isOpen = expandedCols[c.id] !== false;
+          const isOpen = colFilter.trim() ? true : expandedCols[c.id] !== false;
+          const indent = Math.min(depth, 5) * 12;
+          const count = colCounts.get(c.id) ?? 0;
           return (
             <div key={c.id}>
               {editingCol === c.id ? (
                 <input
                   className="input sm"
-                  style={{ width: `calc(100% - ${16 + depth * 14}px)`, marginLeft: 12 + depth * 14, marginTop: 2, marginBottom: 2 }}
+                  style={{ width: `calc(100% - ${16 + indent}px)`, marginLeft: 12 + indent, marginTop: 2, marginBottom: 2 }}
                   autoFocus
                   defaultValue={c.name}
                   onBlur={(e) => {
@@ -1193,7 +1281,7 @@ function Sidebar({
               ) : (
                 <div
                   className={`side-item tree-item${isActive({ kind: 'collection', id: c.id }) ? ' active' : ''}${overTarget === c.id ? ' drop' : ''}`}
-                  style={{ paddingLeft: 10 + depth * 14 }}
+                  style={{ paddingLeft: 10 + indent }}
                   role="button"
                   tabIndex={0}
                   draggable
@@ -1209,7 +1297,7 @@ function Sidebar({
                     setColMenu({ col: c, x: e.clientX, y: e.clientY });
                   }}
                   {...dropOnCol(c.id)}
-                  title="单击查看 · 双击重命名 · 右键新建子分类或管理 · 支持拖拽文献和子目录"
+                  title={`${c.name}（${count} 篇）\n单击查看 · 双击重命名 · 右键管理 · 拖入本地文件夹可作为子分类导入`}
                 >
                   {hasChildren ? (
                     <button
@@ -1230,7 +1318,7 @@ function Sidebar({
                     <Icon name="folder" size={14} />
                   </span>
                   <span className="side-name">{c.name}</span>
-                  <span className="count">{colCounts.get(c.id) ?? 0}</span>
+                  <span className="count">{count}</span>
                   <button
                     className="side-add"
                     title="新建子分类"
@@ -1255,7 +1343,7 @@ function Sidebar({
                   </button>
                 </div>
               )}
-              {addingParent === c.id && renderInlineNewInput(depth + 1)}
+              {addingParent === c.id && renderInlineNewInput(Math.min(depth + 1, 5))}
             </div>
           );
         })}
@@ -1265,10 +1353,15 @@ function Sidebar({
             + 新建课题分类（支持多级子目录）
           </button>
         )}
+        {collections.length > 0 && visibleTree.length === 0 && colFilter.trim() && (
+          <div className="hint" style={{ padding: '6px 12px', fontSize: 12 }}>
+            无匹配分类
+          </div>
+        )}
+      </div>
 
-        <div className="side-divider" />
-
-        {/* Compact Zotero system views */}
+      {/* Pinned Zotero system views: always reachable even with 100+ folders */}
+      <div className="side-sys">
         {systemViews.map((s) => (
           <button
             key={s.v.kind}
@@ -1284,14 +1377,29 @@ function Sidebar({
         ))}
       </div>
 
-      {/* Zotero-style docked bottom Tag Selector with colored tags */}
-      <div className="tag-pane">
-        <div className="tag-pane-head">
+      {/* Collapsible Zotero-style bottom Tag Selector */}
+      <div className={`tag-pane${tagsCollapsed ? ' collapsed' : ''}`}>
+        <div
+          className="tag-pane-head"
+          role="button"
+          tabIndex={0}
+          onClick={() => setTagsCollapsed((v) => !v)}
+          title={tagsCollapsed ? '展开标签栏' : '折叠标签栏（给上方分类树腾出更多空间）'}
+          style={{ cursor: 'pointer' }}
+        >
           <span className="row" style={{ gap: 5 }}>
-            <Icon name="tag" size={12} /> 标签
+            <Icon name={tagsCollapsed ? 'next' : 'down'} size={11} />
+            <Icon name="tag" size={12} /> 标签{tags.length > 0 ? ` (${tags.length})` : ''}
           </span>
           {view.kind === 'tag' && (
-            <button className="btn ghost sm" style={{ height: 20, padding: '0 4px' }} onClick={() => setView({ kind: 'all' })}>
+            <button
+              className="btn ghost sm"
+              style={{ height: 20, padding: '0 4px' }}
+              onClick={(e) => {
+                e.stopPropagation();
+                setView({ kind: 'all' });
+              }}
+            >
               清除
             </button>
           )}

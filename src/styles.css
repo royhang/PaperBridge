@@ -1418,15 +1418,58 @@ a {
 }
 
 /* Zotero bottom-left Tag Selector */
+.side-top {
+  flex: none;
+  padding: 6px 6px 4px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+}
+.side-col-filter {
+  position: relative;
+  margin-top: 5px;
+}
+.side-col-filter .input.sm {
+  height: 26px;
+  font-size: 12px;
+  padding-right: 22px;
+}
+.side-col-clear {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  border: 0;
+  background: transparent;
+  color: var(--fg-subtle);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0 4px;
+}
+.side-col-clear:hover {
+  color: var(--fg);
+}
+.side-sys {
+  flex: none;
+  padding: 4px 6px;
+  border-top: 1px solid var(--border);
+}
 .tag-pane {
-  height: 176px;
-  min-height: 110px;
-  max-height: 36%;
+  height: 170px;
+  min-height: 100px;
+  max-height: 34%;
   flex: none;
   display: flex;
   flex-direction: column;
   border-top: 1px solid var(--border);
   background: color-mix(in srgb, var(--bg) 55%, var(--bg-elev));
+}
+.tag-pane.collapsed {
+  height: auto;
+  min-height: 0;
+}
+.tag-pane.collapsed .tag-pane-list,
+.tag-pane.collapsed .tag-pane-foot {
+  display: none;
 }
 .tag-pane-head {
   display: flex;
