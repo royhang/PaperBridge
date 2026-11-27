@@ -1,0 +1,102 @@
+name: Build Android APK
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'public/**'
+      - 'android/**'
+      - 'package.json'
+      - '.github/workflows/android.yml'
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  android-apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.10.2'
+
+      - name: Install web dependencies & build dist
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm build
+          node android/scripts/prepare.mjs
+
+      - name: Prepare Android release keystore
+        env:
+          ANDROID_KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          KS_PATH="$GITHUB_WORKSPACE/android/release.jks"
+          if [ -n "$ANDROID_KEYSTORE_B64" ]; then
+            echo "$ANDROID_KEYSTORE_B64" | base64 -d > "$KS_PATH"
+          else
+            keytool -genkeypair -v -keystore "$KS_PATH" -storetype PKCS12 \
+              -keyalg RSA -keysize 2048 -validity 10000 \
+              -alias "${ANDROID_KEY_ALIAS:-paperbridge}" \
+              -storepass "${ANDROID_KEYSTORE_PASSWORD:-paperbridge}" \
+              -keypass "${ANDROID_KEY_PASSWORD:-paperbridge}" \
+              -dname "CN=PaperBridge, OU=OpenSource, O=PaperBridge, L=Beijing, S=Beijing, C=CN"
+          fi
+          echo "ANDROID_KEYSTORE_PATH=$KS_PATH" >> "$GITHUB_ENV"
+
+      - name: Build signed Release APK
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD || 'paperbridge' }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS || 'paperbridge' }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD || 'paperbridge' }}
+        run: gradle -p android assembleRelease --no-daemon
+
+      - name: Rename APK with version
+        id: pkg
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          APK_OUT="PaperBridge-${VERSION}-android.apk"
+          cp android/app/build/outputs/apk/release/app-release.apk "$APK_OUT"
+          ls -lh "$APK_OUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "apk=$APK_OUT" >> "$GITHUB_OUTPUT"
+
+      - name: Upload APK workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: PaperBridge-${{ steps.pkg.outputs.version }}-android-apk
+          path: ${{ steps.pkg.outputs.apk }}
+
+      - name: Attach APK to GitHub Release (if release tag exists)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="v${{ steps.pkg.outputs.version }}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "${{ steps.pkg.outputs.apk }}" --clobber
+            echo "Uploaded ${{ steps.pkg.outputs.apk }} to release $TAG"
+          else
+            echo "Release $TAG does not exist yet; APK is available in workflow artifacts."
+          fi

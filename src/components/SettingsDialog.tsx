@@ -12,6 +12,7 @@ import { parseApiSnippet } from '../providers/quickParse';
 import { LLM_KINDS, type ProviderConfig, type ProviderKind } from '../providers/types';
 import { ensureOk } from '../providers/sse';
 import { checkSyncServer, loginAccount, logoutAccount, registerAccount, syncNow } from '../services/sync';
+import { download } from '../services/export';
 import { describeError } from '../services/translate';
 import { checkForUpdates, type UpdateInfo } from '../services/update';
 import { DEFAULT_PROMPTS, defaultProxyUrl, useSettings, type PromptTemplates } from '../store/settings';
@@ -1735,11 +1736,7 @@ function DataSection() {
               setBusy(true);
               try {
                 const blob = await exportLibrary(setMsg);
-                const a = document.createElement('a');
-                a.href = URL.createObjectURL(blob);
-                a.download = `paperbridge-backup-${new Date().toLocaleDateString('sv-SE')}.zip`;
-                a.click();
-                setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+                download(`paperbridge-backup-${new Date().toLocaleDateString('sv-SE')}.zip`, blob, 'application/zip');
                 setMsg(`已导出备份（${(blob.size / 1048576).toFixed(1)} MB）`);
               } catch (e) {
                 setMsg(`导出失败：${e instanceof Error ? e.message : e}`);
@@ -1810,14 +1807,11 @@ function DataSection() {
             onClick={() => {
               const { providers, translateProviderId, chatProviderId, sourceLang, targetLang, proxyUrl, selectionAction, theme, concurrency, batchSize, prompts, readerFontSize } =
                 useSettings.getState();
-              const blob = new Blob(
-                [JSON.stringify({ providers, translateProviderId, chatProviderId, sourceLang, targetLang, proxyUrl, selectionAction, theme, concurrency, batchSize, prompts, readerFontSize }, null, 2)],
-                { type: 'application/json' },
+              download(
+                'paperbridge-settings.json',
+                JSON.stringify({ providers, translateProviderId, chatProviderId, sourceLang, targetLang, proxyUrl, selectionAction, theme, concurrency, batchSize, prompts, readerFontSize }, null, 2),
+                'application/json',
               );
-              const a = document.createElement('a');
-              a.href = URL.createObjectURL(blob);
-              a.download = 'paperbridge-settings.json';
-              a.click();
             }}
           >
             导出设置

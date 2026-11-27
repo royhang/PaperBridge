@@ -1,12 +1,22 @@
 import { db } from '../db/db';
+import { desktop } from '../lib/desktop';
 import type { PDFDocumentProxy } from '../pdf/loader';
 import { cachedPageTranslations, pageParagraphs } from './fulltext';
 
 export function download(filename: string, data: string | Blob, type = 'text/markdown;charset=utf-8') {
-  const url = URL.createObjectURL(typeof data === 'string' ? new Blob([data], { type }) : data);
+  const safeName = filename.replace(/[\\/:*?"<>|]+/g, '_');
+  const blob = typeof data === 'string' ? new Blob([data], { type }) : data;
+  const nativeSave = desktop()?.saveFile;
+  if (nativeSave) {
+    void blob.arrayBuffer().then((buf) => {
+      nativeSave(safeName, new Uint8Array(buf), blob.type || type);
+    });
+    return;
+  }
+  const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = filename.replace(/[\\/:*?"<>|]+/g, '_');
+  a.download = safeName;
   a.click();
   setTimeout(() => URL.revokeObjectURL(url), 10_000);
 }

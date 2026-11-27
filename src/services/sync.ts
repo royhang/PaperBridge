@@ -77,7 +77,13 @@ function normalizeServerUrl(raw: string): string {
 
 function deviceLabel(): string {
   const d = desktop();
-  if (d) return `Desktop (${d.platform} ${d.version})`;
+  if (d) {
+    if (d.platform === 'android') {
+      const isTablet = typeof window !== 'undefined' && Math.min(window.screen?.width || window.innerWidth, window.screen?.height || window.innerHeight) >= 600;
+      return `${isTablet ? 'Android Tablet' : 'Android Phone'} (APK ${d.version})`;
+    }
+    return `Desktop (${d.platform} ${d.version})`;
+  }
   if (typeof navigator !== 'undefined') {
     const ua = navigator.userAgent || '';
     const isIpad = /iPad/i.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);

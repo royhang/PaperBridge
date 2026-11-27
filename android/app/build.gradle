@@ -1,0 +1,65 @@
+import groovy.json.JsonSlurper
+
+plugins {
+    id 'com.android.application'
+}
+
+def rootPkgFile = file('../../package.json')
+def pkgVersion = rootPkgFile.exists() ? new JsonSlurper().parseText(rootPkgFile.text).version.toString() : '0.9.0'
+def verParts = pkgVersion.split('\\.')
+def computedVersionCode = (verParts[0].toInteger() * 10000) + (verParts[1].toInteger() * 100) + verParts[2].toInteger()
+
+android {
+    namespace 'io.github.paperbridge.app'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId "io.github.paperbridge.app"
+        minSdk 26
+        targetSdk 35
+        versionCode computedVersionCode
+        versionName pkgVersion
+    }
+
+    signingConfigs {
+        release {
+            def ksPath = System.getenv('ANDROID_KEYSTORE_PATH')
+            if (ksPath && file(ksPath).exists()) {
+                storeFile file(ksPath)
+                storePassword System.getenv('ANDROID_KEYSTORE_PASSWORD') ?: 'paperbridge'
+                keyAlias System.getenv('ANDROID_KEY_ALIAS') ?: 'paperbridge'
+                keyPassword System.getenv('ANDROID_KEY_PASSWORD') ?: 'paperbridge'
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            shrinkResources false
+            if (signingConfigs.release.storeFile != null) {
+                signingConfig signingConfigs.release
+            } else {
+                signingConfig signingConfigs.debug
+            }
+        }
+        debug {
+            applicationIdSuffix ".debug"
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    androidResources {
+        // Keep wasm & fonts uncompressed so AssetManager streams them with zero extraction overhead
+        noCompress 'wasm', 'ttf', 'woff', 'woff2', 'bcmap', 'pfb'
+    }
+}
+
+dependencies {
+    implementation 'androidx.appcompat:appcompat:1.7.0'
+    implementation 'androidx.webkit:webkit:1.12.1'
+}

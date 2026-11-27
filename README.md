@@ -113,9 +113,12 @@ docker compose up -d
 2. 在 Chrome / Edge 打开 `chrome://extensions` 开启「开发者模式」→「加载已解压的扩展程序」。
 3. 在知网、arXiv、IEEE 页面点击插件图标，选分类打标签一键入库。
 
-### 3. iPadOS / 安卓平板与手机（PWA 全屏 App + 手写笔双层批注）
-1. **安卓平板 / 安卓手机**：在 Chrome / Edge 打开你的 PaperBridge HTTPS 地址（或 Windows 便携版局域网地址），点击「安装应用 / 添加到主屏幕」即可作为独立全屏 App 运行；原生适配**三星 S-Pen、华为 M-Pencil、小米灵感触控笔**压感、防手掌误触及手写笔侧键/尾端橡皮擦，手机端自动适配单手布局并默认开启手指标注。
-2. **iPadOS**：在 iPad Safari 打开后点击「分享 → 添加到主屏幕」全屏运行，支持 Apple Pencil 防误触与 120Hz 滚动缩放。
+### 3. 安卓原生安装包（APK）与 iPadOS 平板
+1. **安卓平板 / 安卓手机（现成 `.apk` 直装）**：
+   - 直接在 [GitHub Releases](https://github.com/royhang/PaperBridge/releases) 下载 `PaperBridge-<版本>-android.apk` 安装（支持 Android 8.0+ / 鸿蒙平板与手机）。
+   - **内置本地跨域代理**：无需云服务器或外部代理即可直连 OpenAI / DeepSeek / Claude / Gemini / DeepL / 百度 / 有道 / 高校接口，自动复用本机 VPN/Clash；支持在微信、QQ、文件管理器中点击 PDF 直接「用 PaperBridge 打开」、一键导出译文 PDF 到 `下载/PaperBridge`、原生适配**三星 S-Pen / 华为 M-Pencil / 小米灵感触控笔**压感、防手掌误触与侧键橡皮。
+   - 也支持 Chrome / Edge 访问网页版一键安装 PWA，并可连接云服务器、Docker 或 Windows 便携版局域网同步。
+2. **iPadOS**：在 iPad Safari 打开你的 PaperBridge HTTPS 地址（或 Windows 便携版局域网地址），点击「分享 → 添加到主屏幕」全屏运行，支持 Apple Pencil 防误触与 120Hz 滚动缩放。
 3. 在平板或手机端登录同一云同步账号，即可自动同步全部文献、PDF、笔记、原/译双层笔迹与配置；阅读器工具栏可一键切换**暗夜/柔光 PDF 纸张**与**沉浸阅读模式**。
 
 ---

@@ -455,12 +455,7 @@ export function DocDetail({ doc, onClose }: { doc: DocRecord; onClose: () => voi
                     onClick={async () => {
                       const b = await db.blobs.get(doc.id);
                       if (!b) return;
-                      const url = URL.createObjectURL(b.blob);
-                      const a = document.createElement('a');
-                      a.href = url;
-                      a.download = doc.fileName || `${doc.title}.pdf`;
-                      a.click();
-                      setTimeout(() => URL.revokeObjectURL(url), 1000);
+                      download(doc.fileName || `${doc.title}.pdf`, b.blob, 'application/pdf');
                     }}
                   >
                     <Icon name="download" size={12} /> 下载 PDF

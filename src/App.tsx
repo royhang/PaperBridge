@@ -182,6 +182,35 @@ export default function App() {
     return () => window.removeEventListener('open-settings', open);
   }, []);
 
+  // Android APK hardware/gesture back button handler
+  useEffect(() => {
+    const w = window as unknown as { __pbAndroidBack?: () => boolean };
+    w.__pbAndroidBack = () => {
+      if (settingsOpen) {
+        setSettingsOpen(null);
+        return true;
+      }
+      const r = useReader.getState();
+      if (r.focusMode) {
+        r.setFocusMode(false);
+        return true;
+      }
+      if (r.sideOpen && useTabs.getState().active.kind === 'doc' && window.innerWidth <= 900) {
+        r.toggleSide();
+        return true;
+      }
+      const tabs = useTabs.getState();
+      if (tabs.active.kind !== 'library') {
+        tabs.activateLibrary();
+        return true;
+      }
+      return false;
+    };
+    return () => {
+      delete w.__pbAndroidBack;
+    };
+  }, [settingsOpen]);
+
   const mountedDocId = active.kind === 'doc' ? active.docId : lastDocId;
   const hideTabBar = active.kind === 'doc' && focusMode;
 
