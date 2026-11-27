@@ -21,6 +21,7 @@ import {
   moveCollection,
   removeFromCollection,
   renameCollection,
+  renameDoc,
   renameTag,
   restoreDocs,
   searchFullText,
@@ -89,6 +90,7 @@ export function LibraryPage() {
   const [hits, setHits] = useState<Map<string, TextHit[]> | null>(null);
   const [indexing, setIndexing] = useState<string>('');
   const [ctxMenu, setCtxMenu] = useState<{ doc: DocRecord; x: number; y: number } | null>(null);
+  const [renamingDocId, setRenamingDocId] = useState<string | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const hasProvider = useSettings((s) => s.providers.length > 0);
   const openDocIds = useMemo(() => new Set(openTabs.map((t) => t.docId)), [openTabs]);
@@ -540,6 +542,8 @@ export function LibraryPage() {
                 isOpen={openDocIds.has(d.id)}
                 isTrash={isTrash}
                 hasNotes={docsWithNotes.has(d.id)}
+                renaming={renamingDocId === d.id}
+                onFinishRename={() => setRenamingDocId((cur) => (cur === d.id ? null : cur))}
                 dupGroup={lib.view.kind === 'duplicates' ? dupGroupIndex.get(d.id) : undefined}
                 hits={activeHits?.get(d.id)}
                 onContextMenu={(e) => {
@@ -553,7 +557,15 @@ export function LibraryPage() {
         </main>
         {selected && <DocDetail doc={selected} onClose={() => lib.select(null)} />}
       </div>
-      {ctxMenu && <DocContextMenu doc={ctxMenu.doc} x={ctxMenu.x} y={ctxMenu.y} onClose={() => setCtxMenu(null)} />}
+      {ctxMenu && (
+        <DocContextMenu
+          doc={ctxMenu.doc}
+          x={ctxMenu.x}
+          y={ctxMenu.y}
+          onRename={() => setRenamingDocId(ctxMenu.doc.id)}
+          onClose={() => setCtxMenu(null)}
+        />
+      )}
       {importOpen && (
         <ImportDialog
           collectionId={lib.view.kind === 'collection' ? lib.view.id : undefined}
@@ -568,6 +580,58 @@ export function LibraryPage() {
   );
 }
 
+function DocRenameInput({ docId, initial, onDone }: { docId: string; initial: string; onDone: () => void }) {
+  const [val, setVal] = useState(initial);
+  const doneRef = useRef(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.focus();
+    el.select();
+  }, []);
+
+  const commit = () => {
+    if (doneRef.current) return;
+    doneRef.current = true;
+    const trimmed = val.trim();
+    if (trimmed && trimmed !== initial) void renameDoc(docId, trimmed);
+    onDone();
+  };
+
+  const cancel = () => {
+    if (doneRef.current) return;
+    doneRef.current = true;
+    onDone();
+  };
+
+  return (
+    <input
+      ref={inputRef}
+      className="input sm doc-rename-input"
+      value={val}
+      aria-label="重命名文献"
+      onChange={(e) => setVal(e.target.value)}
+      onClick={(e) => e.stopPropagation()}
+      onDoubleClick={(e) => e.stopPropagation()}
+      onMouseDown={(e) => e.stopPropagation()}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        e.stopPropagation();
+        if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          commit();
+        } else if (e.key === 'Escape') {
+          e.preventDefault();
+          cancel();
+        }
+      }}
+    />
+  );
+}
+
 function DocRow({
   d,
   stripe,
@@ -575,6 +639,8 @@ function DocRow({
   isOpen,
   isTrash,
   hasNotes,
+  renaming,
+  onFinishRename,
   dupGroup,
   hits,
   onContextMenu,
@@ -586,6 +652,8 @@ function DocRow({
   isOpen: boolean;
   isTrash: boolean;
   hasNotes: boolean;
+  renaming: boolean;
+  onFinishRename: () => void;
   dupGroup?: number;
   hits?: TextHit[];
   onContextMenu: (e: React.MouseEvent) => void;
@@ -602,31 +670,34 @@ function DocRow({
   // Colored dots from Zotero-style colored tags on this doc
   const coloredTags = d.tags.filter((t) => !!tagColors[t]);
 
-  const dragProps = isTrash
-    ? {}
-    : {
-        draggable: true,
-        onDragStart: (e: React.DragEvent) => {
-          const ids = useLibrary.getState().checked.includes(d.id) ? useLibrary.getState().checked : [d.id];
-          e.dataTransfer.setData(DRAG_TYPE, JSON.stringify(ids));
-          e.dataTransfer.effectAllowed = 'copy';
-        },
-      };
+  const dragProps =
+    isTrash || renaming
+      ? {}
+      : {
+          draggable: true,
+          onDragStart: (e: React.DragEvent) => {
+            const ids = useLibrary.getState().checked.includes(d.id) ? useLibrary.getState().checked : [d.id];
+            e.dataTransfer.setData(DRAG_TYPE, JSON.stringify(ids));
+            e.dataTransfer.effectAllowed = 'copy';
+          },
+        };
 
   if (layout === 'table') {
     return (
       <div
         className={`doc-row table-row${selected ? ' selected' : ''}${stripe ? ' stripe' : ''}`}
         {...dragProps}
-        onClick={(e) => open(e.ctrlKey || e.metaKey)}
+        onClick={(e) => {
+          if (!renaming) open(e.ctrlKey || e.metaKey);
+        }}
         onContextMenu={onContextMenu}
         onAuxClick={(e) => {
-          if (e.button === 1 && !isTrash && d.hasPdf) {
+          if (!renaming && e.button === 1 && !isTrash && d.hasPdf) {
             e.preventDefault();
             open(true);
           }
         }}
-        onKeyDown={(e) => e.key === 'Enter' && open(e.ctrlKey || e.metaKey)}
+        onKeyDown={(e) => !renaming && e.key === 'Enter' && open(e.ctrlKey || e.metaKey)}
         tabIndex={0}
         title={isTrash ? '单击查看详情 · 右键还原或彻底删除' : '单击打开阅读 · 右键查看详情与更多操作 · 中键后台打开'}
       >
@@ -666,8 +737,12 @@ function DocRow({
               />
             ))}
             {dupGroup !== undefined && <span className="dup-badge">重复 #{dupGroup}</span>}
-            <span className="doc-title-text">{d.title}</span>
-            {hasNotes && (
+            {renaming ? (
+              <DocRenameInput docId={d.id} initial={d.title} onDone={onFinishRename} />
+            ) : (
+              <span className="doc-title-text">{d.title}</span>
+            )}
+            {!renaming && hasNotes && (
               <span className="doc-note-ico hide-sm" title="含高亮或笔记">
                 <Icon name="notes" size={12} />
               </span>
@@ -728,15 +803,17 @@ function DocRow({
     <div
       className={`doc-row${selected ? ' selected' : ''}`}
       {...dragProps}
-      onClick={(e) => open(e.ctrlKey || e.metaKey)}
+      onClick={(e) => {
+        if (!renaming) open(e.ctrlKey || e.metaKey);
+      }}
       onContextMenu={onContextMenu}
       onAuxClick={(e) => {
-        if (e.button === 1 && !isTrash && d.hasPdf) {
+        if (!renaming && e.button === 1 && !isTrash && d.hasPdf) {
           e.preventDefault();
           open(true);
         }
       }}
-      onKeyDown={(e) => e.key === 'Enter' && open(e.ctrlKey || e.metaKey)}
+      onKeyDown={(e) => !renaming && e.key === 'Enter' && open(e.ctrlKey || e.metaKey)}
       tabIndex={0}
       title={isTrash ? '单击查看详情 · 右键还原或彻底删除' : '单击打开阅读 · 右键查看详情与更多操作 · 中键后台打开'}
     >
@@ -769,7 +846,7 @@ function DocRow({
             />
           ))}
           {dupGroup !== undefined && <span className="dup-badge">重复 #{dupGroup}</span>}
-          {d.title}
+          {renaming ? <DocRenameInput docId={d.id} initial={d.title} onDone={onFinishRename} /> : d.title}
           {!d.hasPdf && <span className="badge">无 PDF</span>}
         </div>
         <div className="doc-sub">
@@ -808,11 +885,23 @@ function DocRow({
   );
 }
 
-function DocContextMenu({ doc, x, y, onClose }: { doc: DocRecord; x: number; y: number; onClose: () => void }) {
+function DocContextMenu({
+  doc,
+  x,
+  y,
+  onRename,
+  onClose,
+}: {
+  doc: DocRecord;
+  x: number;
+  y: number;
+  onRename: () => void;
+  onClose: () => void;
+}) {
   const select = useLibrary((s) => s.select);
   const isTrash = !!doc.deletedAt;
   const left = Math.max(8, Math.min(x, window.innerWidth - 220));
-  const top = Math.max(8, Math.min(y, window.innerHeight - (isTrash ? 160 : 340)));
+  const top = Math.max(8, Math.min(y, window.innerHeight - (isTrash ? 160 : 376)));
 
   const copyCite = (style: 'apa' | 'gbt7714') => {
     void navigator.clipboard.writeText(formatCitation(doc.meta, style));
@@ -866,6 +955,15 @@ function DocContextMenu({ doc, x, y, onClose }: { doc: DocRecord; x: number; y: 
         }}
       >
         查看详情 / 编辑题录
+      </button>
+      <button
+        className="ctx-item"
+        onClick={() => {
+          onClose();
+          onRename();
+        }}
+      >
+        重命名
       </button>
       {doc.hasPdf && (
         <>

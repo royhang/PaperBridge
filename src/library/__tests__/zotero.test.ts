@@ -10,6 +10,7 @@ import {
   flattenCollectionTree,
   getDescendantCollectionIds,
   moveCollection,
+  renameDoc,
   restoreDocs,
   trashDocs,
 } from '../service';
@@ -132,5 +133,18 @@ describe('Zotero library organization (nested collections, trash, duplicates)', 
       ['1', '2'],
       ['3', '4'],
     ]);
+  });
+
+  it('renames a document while keeping meta.title in sync and marking metaSource manual', async () => {
+    await db.docs.add(makeDoc('r1', { title: 'Bad Header 2025', meta: { title: 'Bad Header 2025', authors: [], type: 'article', year: 2025 } }));
+    await renameDoc('r1', '   '); // whitespace-only ignored
+    expect((await db.docs.get('r1'))?.title).toBe('Bad Header 2025');
+
+    await renameDoc('r1', '  ReflecTool: Medical Agent  ');
+    const updated = await db.docs.get('r1');
+    expect(updated?.title).toBe('ReflecTool: Medical Agent');
+    expect(updated?.meta.title).toBe('ReflecTool: Medical Agent');
+    expect(updated?.meta.year).toBe(2025);
+    expect(updated?.metaSource).toBe('manual');
   });
 });

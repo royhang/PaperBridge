@@ -1689,6 +1689,14 @@ a {
 .doc-row.selected .doc-title-text {
   font-weight: 600;
 }
+.doc-rename-input {
+  flex: 1;
+  min-width: 120px;
+  height: 24px;
+  padding: 1px 6px;
+  font-size: inherit;
+  font-weight: 500;
+}
 .inline-tags {
   display: inline-flex;
   align-items: center;

@@ -1,4 +1,5 @@
 import { db, deleteDocument, sha256Hex, uid, type Collection, type DocRecord, type ReadStatus } from '../db/db';
+import { useReader } from '../store/reader';
 import { useTabs } from '../store/tabs';
 import { openPdf, readTitle, type PDFDocumentProxy } from '../pdf/loader';
 import { useSettings } from '../store/settings';
@@ -602,7 +603,26 @@ export async function saveConnectorItem(payload: ConnectorSavePayload): Promise<
 // ---------------------------------------------------------------- edits
 
 export async function updateMeta(docId: string, meta: PaperMeta) {
-  await db.docs.update(docId, { meta, title: meta.title || '未命名文献', metaSource: 'manual', updatedAt: Date.now() });
+  const title = meta.title || '未命名文献';
+  await db.docs.update(docId, { meta, title, metaSource: 'manual', updatedAt: Date.now() });
+  useTabs.getState().updateTab(docId, { title });
+  if (useReader.getState().docId === docId) useReader.setState({ title });
+}
+
+export async function renameDoc(docId: string, name: string) {
+  const title = name.trim();
+  if (!title) return;
+  const doc = await db.docs.get(docId);
+  if (!doc) return;
+  if (doc.title === title && doc.meta.title === title) return;
+  await db.docs.update(docId, {
+    title,
+    meta: { ...doc.meta, title },
+    metaSource: 'manual',
+    updatedAt: Date.now(),
+  });
+  useTabs.getState().updateTab(docId, { title });
+  if (useReader.getState().docId === docId) useReader.setState({ title });
 }
 
 export async function patchDocs(ids: string[], patch: (d: DocRecord) => Partial<DocRecord>) {
