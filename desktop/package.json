@@ -1,7 +1,7 @@
 {
   "name": "paperbridge-desktop",
   "productName": "PaperBridge",
-  "version": "0.9.1",
+  "version": "0.9.2",
   "description": "PaperBridge 文献阅读翻译 — 桌面客户端",
   "license": "MIT",
   "private": true,

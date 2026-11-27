@@ -283,7 +283,6 @@ export function LibraryPage() {
             <button className="btn sm primary" onClick={() => setImportOpen(true)} title="导入 PDF / DOI / arXiv / BibTeX / 知网">
               <Icon name="plus" size={14} /> 导入
             </button>
-            <MobileViewSelect activeDocs={activeDocs} collections={collections ?? []} trashedCount={trashedDocs.length} dupCount={dupGroupIndex.size} />
             <div className="view-switch hide-sm" role="group" aria-label="列表样式">
               <button
                 className={lib.layout === 'table' ? 'active' : ''}
@@ -515,51 +514,6 @@ export function LibraryPage() {
         />
       )}
     </div>
-  );
-}
-
-function MobileViewSelect({
-  activeDocs,
-  collections,
-  trashedCount,
-  dupCount,
-}: {
-  activeDocs: DocRecord[];
-  collections: Collection[];
-  trashedCount: number;
-  dupCount: number;
-}) {
-  const view = useLibrary((s) => s.view);
-  const setView = useLibrary((s) => s.setView);
-  const tree = useMemo(() => flattenCollectionTree(collections), [collections]);
-  const tags = [...new Set(activeDocs.flatMap((d) => d.tags))].sort();
-  const value = `${view.kind}:${view.id ?? ''}`;
-  return (
-    <select
-      className="select sm show-sm"
-      style={{ width: 'auto', maxWidth: 150 }}
-      value={value}
-      onChange={(e) => {
-        const [kind, ...rest] = e.target.value.split(':');
-        setView({ kind: kind as LibraryView['kind'], id: rest.join(':') || undefined });
-      }}
-    >
-      <option value="all:">我的文库 ({activeDocs.length})</option>
-      {tree.map(({ col, depth }) => (
-        <option key={col.id} value={`collection:${col.id}`}>
-          {'　'.repeat(depth)}▸ {col.name}
-        </option>
-      ))}
-      <option value="recent:">最近阅读</option>
-      <option value="unfiled:">未分类条目</option>
-      {dupCount > 0 && <option value="duplicates:">重复条目 ({dupCount})</option>}
-      <option value="trash:">回收站 ({trashedCount})</option>
-      {tags.map((t) => (
-        <option key={t} value={`tag:${t}`}>
-          # {t}
-        </option>
-      ))}
-    </select>
   );
 }
 
@@ -1142,6 +1096,12 @@ function Sidebar({
 
   return (
     <aside className={`lib-side${drawerOpen ? ' drawer-open' : ''}`} style={{ width }}>
+      <div className="drawer-head">
+        <span>文库与分类</span>
+        <button className="icon-btn sm-ico" onClick={onCloseDrawer} title="关闭侧栏">
+          <Icon name="close" size={15} />
+        </button>
+      </div>
       <div className="lib-side-scroll">
         {/* Zotero primary root: 我的文库 + nested Collection Tree directly underneath */}
         <div

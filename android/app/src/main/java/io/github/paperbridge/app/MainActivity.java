@@ -5,6 +5,7 @@ import android.content.ContentResolver;
 import android.content.ContentValues;
 import android.content.Intent;
 import android.database.Cursor;
+import android.graphics.Color;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -12,6 +13,7 @@ import android.os.Environment;
 import android.provider.MediaStore;
 import android.provider.OpenableColumns;
 import android.util.Base64;
+import android.view.ViewGroup;
 import android.webkit.JavascriptInterface;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
@@ -20,6 +22,7 @@ import android.webkit.WebResourceResponse;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.widget.FrameLayout;
 import android.widget.Toast;
 
 import androidx.activity.OnBackPressedCallback;
@@ -28,6 +31,11 @@ import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.core.graphics.Insets;
+import androidx.core.view.ViewCompat;
+import androidx.core.view.WindowCompat;
+import androidx.core.view.WindowInsetsCompat;
+import androidx.core.view.WindowInsetsControllerCompat;
 import androidx.webkit.WebViewAssetLoader;
 
 import org.json.JSONObject;
@@ -48,6 +56,7 @@ public class MainActivity extends AppCompatActivity {
     private static final String APP_ORIGIN = "https://appassets.androidplatform.net";
     private static final String APP_START_URL = APP_ORIGIN + "/index.html";
 
+    private FrameLayout rootContainer;
     private WebView webView;
     private LocalProxyServer proxyServer;
     private ValueCallback<Uri[]> pendingFileChooser;
@@ -100,8 +109,33 @@ public class MainActivity extends AppCompatActivity {
         } catch (IOException ignored) {
         }
 
+        rootContainer = new FrameLayout(this);
+        rootContainer.setLayoutParams(new ViewGroup.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.MATCH_PARENT
+        ));
+        rootContainer.setBackgroundColor(Color.parseColor("#14161A"));
+
         webView = new WebView(this);
-        setContentView(webView);
+        webView.setLayoutParams(new FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.MATCH_PARENT
+        ));
+        rootContainer.addView(webView);
+        setContentView(rootContainer);
+
+        // Properly inset the WebView below the status bar/cutout and above the navigation bar/IME
+        // (essential on Android 15+ where edge-to-edge is enforced for targetSdk 35).
+        ViewCompat.setOnApplyWindowInsetsListener(rootContainer, (v, windowInsets) -> {
+            Insets bars = windowInsets.getInsets(
+                WindowInsetsCompat.Type.systemBars()
+                    | WindowInsetsCompat.Type.displayCutout()
+                    | WindowInsetsCompat.Type.ime()
+            );
+            v.setPadding(bars.left, bars.top, bars.right, bars.bottom);
+            return WindowInsetsCompat.CONSUMED;
+        });
+        ViewCompat.requestApplyInsets(rootContainer);
 
         WebSettings settings = webView.getSettings();
         settings.setJavaScriptEnabled(true);
@@ -360,6 +394,24 @@ public class MainActivity extends AppCompatActivity {
         public void markReady() {
             pageReady = true;
             flushPendingPdfs();
+        }
+
+        @JavascriptInterface
+        public void setChromeTheme(boolean dark, String chromeHex) {
+            runOnUiThread(() -> {
+                try {
+                    int color = Color.parseColor(chromeHex != null && !chromeHex.isEmpty() ? chromeHex : (dark ? "#14161A" : "#EAEDF2"));
+                    if (rootContainer != null) rootContainer.setBackgroundColor(color);
+                    getWindow().setStatusBarColor(color);
+                    getWindow().setNavigationBarColor(color);
+                    WindowInsetsControllerCompat controller = WindowCompat.getInsetsController(getWindow(), getWindow().getDecorView());
+                    if (controller != null) {
+                        controller.setAppearanceLightStatusBars(!dark);
+                        controller.setAppearanceLightNavigationBars(!dark);
+                    }
+                } catch (Exception ignored) {
+                }
+            });
         }
 
         @JavascriptInterface

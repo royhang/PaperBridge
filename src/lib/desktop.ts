@@ -37,6 +37,8 @@ export interface DesktopBridge {
   };
   /** Native file save to Downloads (used by Android APK where blob: <a download> is unsupported) */
   saveFile?: (filename: string, data: Uint8Array, mimeType: string) => boolean;
+  /** Sync native Android status/navigation bar color & icon polarity with light/dark theme */
+  setChromeTheme?: (dark: boolean, chromeHex: string) => void;
 }
 
 interface AndroidNativeInterface {
@@ -45,6 +47,7 @@ interface AndroidNativeInterface {
   getVersion: () => string;
   markReady: () => void;
   saveFile: (filename: string, base64Data: string, mimeType: string) => boolean;
+  setChromeTheme?: (dark: boolean, chromeHex: string) => void;
 }
 
 function bytesToBase64(bytes: Uint8Array): string {
@@ -93,6 +96,9 @@ export function desktop(): DesktopBridge | undefined {
         },
         saveFile(filename, data, mimeType) {
           return native.saveFile(filename, bytesToBase64(data), mimeType);
+        },
+        setChromeTheme(dark, chromeHex) {
+          native.setChromeTheme?.(dark, chromeHex);
         },
       };
     }

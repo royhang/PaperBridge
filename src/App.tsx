@@ -63,6 +63,7 @@ export default function App() {
       el.setAttribute('data-pdf-theme', resolvedPdf);
       // Keep iPadOS / iOS / Android status bar seamlessly matched to the app chrome color
       const chromeColor = dark ? '#14161a' : '#eaedf2';
+      desktop()?.setChromeTheme?.(dark, chromeColor);
       document.querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]').forEach((m) => {
         if (theme !== 'system') {
           m.removeAttribute('media');
