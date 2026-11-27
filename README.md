@@ -68,16 +68,32 @@
 
 ## 界面预览
 
-### 保版式双栏全文翻译 & 多标签阅读
-![保版式双栏全文翻译与多文献标签页](docs/screenshots/reader-dual.png)
+### 1. 保版式双栏译文（公式 / 图表完整保留）+ 译文划词工具栏 + KaTeX AI 问答
+> 原位重排中文译文，保留矢量架构图、独立公式与行内数学符号；在**译文页**同样可划词弹出翻译 / 解释 / 五色高亮 / 术语 / 提问工具栏，右侧 AI 问答直接渲染 LaTeX 公式并附带全文上下文。
 
-### 划词翻译与选区持续高亮对照
-![划词翻译与左侧选区持续高亮](docs/screenshots/reader-select-pin.png)
+![保版式双栏译文、译文划词工具栏与 KaTeX AI 问答](docs/screenshots/reader-dual-formula.png)
 
-### 类 Zotero 三栏文献库（浅色 / 深色）
-| 浅色模式 | 深色模式 |
+### 2. 羊皮纸护眼模式 + 原/译双层手写批注 + 双层笔记整理
+> 一键切换复古羊皮纸底色与协调暖色桌面背景；原文页与译文页拥有独立手写与高亮图层，右侧笔记自动标记「原文 / 译文」来源，点击即定位跳转。
+
+![羊皮纸护眼模式、原译双层手写批注与笔记整理](docs/screenshots/reader-parchment-ink.png)
+
+### 3. 暗夜护眼模式（深色界面 + 暗夜反色 PDF + 划词流式翻译）
+> 切换深色模式时 PDF 自动联动柔和暗夜纸张，高亮标注自动切为高对比度屏幕混合模式，划词翻译在左侧持续锁定高亮原句便于左右对照。
+
+![暗夜护眼模式与划词流式翻译](docs/screenshots/reader-dark-dual.png)
+
+### 4. 类 Zotero 7 三栏文献库（浅色 / 深色模式）
+> 左侧支持无限级嵌套分类与目录快筛、Zotero 彩色标签；中间提供状态叠加筛选与右键快捷操作（含行内重命名）；右侧即点即看题录详情与一键引用导出。
+
+| 浅色模式（含右键快捷菜单） | 深色模式 |
 | --- | --- |
-| ![三栏文献库浅色模式](docs/screenshots/library-zotero.png) | ![三栏文献库深色模式](docs/screenshots/library-dark.png) |
+| ![类 Zotero 三栏文献库浅色模式](docs/screenshots/library-light.png) | ![类 Zotero 三栏文献库深色模式](docs/screenshots/library-dark.png) |
+
+### 5. Android APK / iPadOS 移动端全自适应体验
+> 同一套工作台原生适配手机与平板：随时浏览筛选文献库，单栏精读羊皮纸或暗夜译文，并支持触控笔防误触与全端加密云同步。
+
+![Android 与 iPadOS 移动端三屏展示](docs/screenshots/mobile-showcase.png)
 
 ---
 
