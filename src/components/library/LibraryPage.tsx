@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { db, deleteDocument, type Collection, type DocRecord, type ReadStatus } from '../../db/db';
 import { formatCitation } from '../../library/citation';
 import { toBibTeXLibrary } from '../../library/bibtex';
+import { scanDataTransfer, type FolderScanResult } from '../../library/folder';
 import { authorName, authorsShort, STATUS_LABEL } from '../../library/format';
 import {
   addTags,
@@ -13,6 +14,7 @@ import {
   findDuplicateGroups,
   flattenCollectionTree,
   getDescendantCollectionIds,
+  importFolderPdfs,
   importPdfFile,
   indexAll,
   moveCollection,
@@ -208,6 +210,41 @@ export function LibraryPage() {
     if (lastId) lib.select(lastId);
   };
 
+  const importFolderScan = async (scanPromise: Promise<FolderScanResult>) => {
+    setBusy('正在扫描文件夹中的 PDF…');
+    try {
+      const scan = await scanPromise;
+      if (!scan.items.length) {
+        setBusy(scan.ignoredCount > 0 ? `未发现 PDF 文件（已忽略 ${scan.ignoredCount} 个非 PDF 文件）` : '');
+        if (scan.ignoredCount > 0) setTimeout(() => setBusy((cur) => (cur.startsWith('未发现 PDF') ? '' : cur)), 3500);
+        return;
+      }
+      const parentId = lib.view.kind === 'collection' ? lib.view.id ?? null : null;
+      const summary = await importFolderPdfs(scan.items, {
+        parentCollectionId: parentId,
+        ignoredCount: scan.ignoredCount,
+        onProgress: setBusy,
+      });
+      for (const cid of summary.touchedCollectionIds) {
+        lib.setColExpanded(cid, true);
+      }
+      if (summary.lastDocId) lib.select(summary.lastDocId);
+      const parts = [
+        `新增 ${summary.added} 篇 PDF`,
+        summary.collectionsCreated > 0 ? `新建 ${summary.collectionsCreated} 个分类` : '',
+        summary.duplicates > 0 ? `${summary.duplicates} 篇已在库中（已归入对应分类）` : '',
+        summary.ignored > 0 ? `忽略 ${summary.ignored} 个非 PDF` : '',
+        summary.failed > 0 ? `${summary.failed} 篇失败` : '',
+      ].filter(Boolean);
+      const doneText = `导入完成：${parts.join('，')}`;
+      setBusy(doneText);
+      setTimeout(() => setBusy((cur) => (cur === doneText ? '' : cur)), 5000);
+    } catch (e) {
+      setBusy('');
+      alert(`导入文件夹失败：${(e as Error).message}`);
+    }
+  };
+
   const allShownChecked = shown.length > 0 && shown.every((d) => lib.checked.includes(d.id));
   const sortArrow = (k: SortKey) => (lib.sort === k ? (lib.sortDesc ? ' ↓' : ' ↑') : '');
 
@@ -266,9 +303,9 @@ export function LibraryPage() {
           onDragLeave={() => setDropOver(false)}
           onDrop={(e) => {
             setDropOver(false);
-            if (!e.dataTransfer.files.length) return;
+            if (!e.dataTransfer.files.length && !e.dataTransfer.items?.length) return;
             e.preventDefault();
-            void importFiles([...e.dataTransfer.files]);
+            void importFolderScan(scanDataTransfer(e.dataTransfer));
           }}
         >
           {/* Zotero-style compact action & search toolbar */}
@@ -468,8 +505,8 @@ export function LibraryPage() {
                 {activeDocs.length === 0 && !isTrash ? (
                   <>
                     <Icon name="upload" size={28} />
-                    <p>把 PDF 拖到这里，或点击左上角「导入」。</p>
-                    <p className="hint">也可以粘贴 DOI / arXiv 链接，或导入 Zotero 导出的 BibTeX。所有数据只保存在本机。</p>
+                    <p>把 PDF 或整个文献文件夹拖到这里，或点击左上角「导入」。</p>
+                    <p className="hint">拖入文件夹会自动只导入其中的 PDF 并保留子文件夹嵌套分类；也支持 DOI / arXiv / 知网 BibTeX。</p>
                   </>
                 ) : isTrash ? (
                   '回收站是空的'
@@ -509,6 +546,7 @@ export function LibraryPage() {
         <ImportDialog
           collectionId={lib.view.kind === 'collection' ? lib.view.id : undefined}
           onFiles={(f) => void importFiles(f)}
+          onFolderScan={(scan) => void importFolderScan(scan)}
           onClose={() => setImportOpen(false)}
           onImported={(id) => lib.select(id)}
         />

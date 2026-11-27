@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { extractPdfsFromFileList, scanDataTransfer, type FolderScanResult } from '../../library/folder';
 import { importFromIdentifier, importReferencesText } from '../../library/service';
 import { useEscape } from '../../lib/useEscape';
 import { Icon } from '../Icon';
@@ -15,11 +16,13 @@ interface Line {
 export function ImportDialog({
   collectionId,
   onFiles,
+  onFolderScan,
   onClose,
   onImported,
 }: {
   collectionId?: string;
   onFiles: (f: File[]) => void;
+  onFolderScan: (scan: Promise<FolderScanResult>) => void;
   onClose: () => void;
   onImported: (docId: string) => void;
 }) {
@@ -31,6 +34,7 @@ export function ImportDialog({
   const [bibMsg, setBibMsg] = useState('');
   const ctrl = useRef<AbortController | null>(null);
   const pdfRef = useRef<HTMLInputElement>(null);
+  const folderRef = useRef<HTMLInputElement>(null);
   const bibRef = useRef<HTMLInputElement>(null);
 
   useEscape(() => !running && onClose());
@@ -85,7 +89,7 @@ export function ImportDialog({
         <nav className="tabs" style={{ padding: '6px 16px 0' }}>
           {(
             [
-              ['pdf', 'PDF 文件'],
+              ['pdf', 'PDF 文件 / 文件夹'],
               ['link', 'DOI / arXiv / 链接'],
               ['bibtex', '知网 / BibTeX / RIS'],
             ] as [Tab, string][]
@@ -103,13 +107,38 @@ export function ImportDialog({
               onDragOver={(e) => e.preventDefault()}
               onDrop={(e) => {
                 e.preventDefault();
-                onFiles([...e.dataTransfer.files]);
+                const scan = scanDataTransfer(e.dataTransfer);
+                onFolderScan(scan);
                 onClose();
               }}
             >
               <Icon name="upload" size={28} />
-              <h2>拖入 PDF 或点击选择（可多选）</h2>
-              <div className="hint">自动识别标题、作者、DOI / arXiv 编号，并在线补全元数据</div>
+              <h2>拖入 PDF 或整个文献文件夹</h2>
+              <div className="hint" style={{ maxWidth: 440, lineHeight: 1.55 }}>
+                上传文件夹时仅导入其中的 PDF 文件（自动跳过其他格式），并按原目录层级保留嵌套分类结构；自动识别标题、作者、DOI / arXiv。
+              </div>
+              <div className="row" style={{ marginTop: 12, gap: 8, justifyContent: 'center', flexWrap: 'wrap' }}>
+                <button
+                  type="button"
+                  className="btn primary"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    pdfRef.current?.click();
+                  }}
+                >
+                  <Icon name="filePdf" size={14} /> 选择 PDF 文件
+                </button>
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    folderRef.current?.click();
+                  }}
+                >
+                  <Icon name="folder" size={14} /> 选择文件夹（含子文件夹）
+                </button>
+              </div>
               <input
                 ref={pdfRef}
                 type="file"
@@ -118,6 +147,21 @@ export function ImportDialog({
                 hidden
                 onChange={(e) => {
                   if (e.target.files) onFiles([...e.target.files]);
+                  onClose();
+                }}
+              />
+              <input
+                ref={folderRef}
+                type="file"
+                multiple
+                hidden
+                {...({ webkitdirectory: '', directory: '' } as Record<string, string>)}
+                onChange={(e) => {
+                  if (e.target.files && e.target.files.length > 0) {
+                    const scanned = extractPdfsFromFileList(e.target.files);
+                    onFolderScan(Promise.resolve(scanned));
+                  }
+                  e.target.value = '';
                   onClose();
                 }}
               />

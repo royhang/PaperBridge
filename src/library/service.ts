@@ -4,6 +4,7 @@ import { openPdf, readTitle, type PDFDocumentProxy } from '../pdf/loader';
 import { useSettings } from '../store/settings';
 import { parseBibTeX } from './bibtex';
 import { parseCnkiFileName, parseReferences } from './cnki';
+import type { FolderPdfItem } from './folder';
 import { crossrefToMeta, extractIdentifiers, guessMetaFromPdf, normalizeTitleForDedupe, parseArxivAtom, parseIdentifierInput, titleFromLayout, type TextRun } from './meta';
 import { NetError, getJson, proxyGet } from './net';
 import type { MetaSource, PaperMeta } from './types';
@@ -252,6 +253,9 @@ export async function importPdfBytes(
   const existing = lookupMeta ? await findDuplicate(lookupMeta) : undefined;
   if (existing && !existing.hasPdf) {
     const d = await attachBytes(existing, buf, fileName);
+    if (opts.collectionId && !d.collectionIds.includes(opts.collectionId)) {
+      await db.docs.update(d.id, { collectionIds: [...d.collectionIds, opts.collectionId], updatedAt: Date.now() });
+    }
     return { docId: d.id, duplicate: false, title: d.title };
   }
   const doc = newDoc(opts.meta ?? { title: '', authors: [], type: 'other' }, opts.metaSource ?? 'pdf', {
@@ -267,6 +271,98 @@ export async function importPdfBytes(
 
 export async function importPdfFile(file: File, collectionId?: string): Promise<ImportResult> {
   return importPdfBytes(await file.arrayBuffer(), file.name, { collectionId });
+}
+
+export interface FolderImportSummary {
+  added: number;
+  duplicates: number;
+  collectionsCreated: number;
+  failed: number;
+  ignored: number;
+  lastDocId: string;
+  touchedCollectionIds: string[];
+}
+
+/**
+ * Import PDFs from a scanned folder tree while recreating the exact nested
+ * collection hierarchy in IndexedDB. Reuses existing sibling collections with
+ * the same name, skips empty non-PDF directories, and assigns deduplicated PDFs
+ * into their folder's collection so no paper is lost from the folder tree.
+ */
+export async function importFolderPdfs(
+  items: FolderPdfItem[],
+  opts: {
+    parentCollectionId?: string | null;
+    ignoredCount?: number;
+    onProgress?: (msg: string) => void;
+    importFile?: (file: File, collectionId?: string) => Promise<ImportResult>;
+  } = {},
+): Promise<FolderImportSummary> {
+  const existingCols = await db.collections.toArray();
+  const colKey = (parentId: string | null, name: string) => `${parentId ?? '__root__'}::${name.trim().toLowerCase()}`;
+  const colMap = new Map<string, string>();
+  for (const c of existingCols) {
+    colMap.set(colKey(c.parentId ?? null, c.name), c.id);
+  }
+
+  let collectionsCreated = 0;
+  const touched = new Set<string>();
+
+  const ensurePath = async (segments: string[]): Promise<string | undefined> => {
+    let parentId: string | null = opts.parentCollectionId ?? null;
+    if (!segments.length) return parentId ?? undefined;
+    for (const rawSeg of segments) {
+      const seg = rawSeg.trim();
+      if (!seg) continue;
+      const key = colKey(parentId, seg);
+      let id = colMap.get(key);
+      if (!id) {
+        const created = await createCollection(seg, parentId);
+        id = created.id;
+        colMap.set(key, id);
+        collectionsCreated++;
+      }
+      touched.add(id);
+      parentId = id;
+    }
+    return parentId ?? undefined;
+  };
+
+  const doImport = opts.importFile ?? importPdfFile;
+  let added = 0;
+  let duplicates = 0;
+  let failed = 0;
+  let lastDocId = '';
+
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
+    const relLabel = item.folderPath.length ? `${item.folderPath.join('/')}/${item.file.name}` : item.file.name;
+    opts.onProgress?.(`导入 ${i + 1}/${items.length}：${relLabel}`);
+    try {
+      const targetColId = await ensurePath(item.folderPath);
+      const res = await doImport(item.file, targetColId);
+      lastDocId = res.docId;
+      if (res.duplicate) {
+        duplicates++;
+        if (targetColId) await addToCollection([res.docId], targetColId);
+      } else {
+        added++;
+      }
+    } catch (e) {
+      failed++;
+      console.warn('importFolderPdfs item failed:', relLabel, e);
+    }
+  }
+
+  return {
+    added,
+    duplicates,
+    collectionsCreated,
+    failed,
+    ignored: opts.ignoredCount ?? 0,
+    lastDocId,
+    touchedCollectionIds: [...touched],
+  };
 }
 
 export async function attachPdfFile(docId: string, file: File) {
