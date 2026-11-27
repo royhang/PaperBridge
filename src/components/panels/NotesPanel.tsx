@@ -68,6 +68,10 @@ function NoteItem({ note }: { note: NoteRecord }) {
 
   const jump = async () => {
     if (!pdf) return;
+    const st = useReader.getState();
+    const layer = note.layer ?? 'original';
+    if (layer === 'translated' && st.viewMode === 'original') st.setViewMode('dual');
+    else if (layer === 'original' && st.viewMode === 'translated') st.setViewMode('dual');
     const page = await pdf.getPage(note.pageIndex + 1);
     const h = page.getViewport({ scale: 1 }).height;
     scrollTo(note.pageIndex, (note.rects[0]?.y ?? 0) * h);
@@ -76,7 +80,10 @@ function NoteItem({ note }: { note: NoteRecord }) {
   return (
     <div className={`note ${note.color}`}>
       <div className="row" style={{ marginBottom: 4 }}>
-        <span className="hint">p.{note.pageIndex + 1}</span>
+        <span className="hint">
+          p.{note.pageIndex + 1}
+          {note.layer === 'translated' ? ' · 译文' : ''}
+        </span>
         <div className="spacer" />
         {COLORS.map((c) => (
           <button
@@ -116,7 +123,7 @@ function NoteItem({ note }: { note: NoteRecord }) {
           <Icon name="trash" size={14} />
         </button>
       </div>
-      <div className="quote" onClick={() => void jump()} title="跳转到原文">
+      <div className="quote" onClick={() => void jump()} title={note.layer === 'translated' ? '跳转到译文' : '跳转到原文'}>
         {note.quote}
       </div>
       {note.translation && <div className="tr">{note.translation}</div>}

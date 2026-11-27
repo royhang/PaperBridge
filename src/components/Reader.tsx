@@ -506,6 +506,7 @@ function SelectionToolbar() {
       id: uid(),
       docId,
       pageIndex: sel.pageIndex,
+      ...(sel.layer === 'translated' ? { layer: 'translated' as const } : {}),
       rects: sel.rects,
       quote: sel.text,
       color,
@@ -530,10 +531,10 @@ function SelectionToolbar() {
       onTouchStart={(e) => e.stopPropagation()}
       onMouseUp={(e) => e.stopPropagation()}
     >
-      <button className="btn" onClick={() => (startJob(sel.text, 'translate', sel.pageIndex, sel.rects), done())}>
+      <button className="btn" onClick={() => (startJob(sel.text, 'translate', sel.pageIndex, sel.rects, sel.layer), done())}>
         <Icon name="translate" size={15} /> 翻译
       </button>
-      <button className="btn" onClick={() => (startJob(sel.text, 'explain', sel.pageIndex, sel.rects), done())}>
+      <button className="btn" onClick={() => (startJob(sel.text, 'explain', sel.pageIndex, sel.rects, sel.layer), done())}>
         <Icon name="sparkle" size={15} /> 解释
       </button>
       <div className="sep" style={{ width: 1, height: 18, background: 'var(--border)', margin: '0 4px' }} />
@@ -549,7 +550,7 @@ function SelectionToolbar() {
         className="btn"
         title="加入术语表"
         onClick={() => {
-          handoffTo('glossary', sel.text, { pageIndex: sel.pageIndex, rects: sel.rects });
+          handoffTo('glossary', sel.text, { pageIndex: sel.pageIndex, rects: sel.rects, layer: sel.layer });
           done();
         }}
       >
@@ -559,7 +560,7 @@ function SelectionToolbar() {
         className="btn"
         title="就此提问"
         onClick={() => {
-          handoffTo('chat', sel.text, { pageIndex: sel.pageIndex, rects: sel.rects });
+          handoffTo('chat', sel.text, { pageIndex: sel.pageIndex, rects: sel.rects, layer: sel.layer });
           done();
         }}
       >

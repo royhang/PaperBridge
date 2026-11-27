@@ -58,7 +58,7 @@ export async function exportNotes(docId: string, title: string) {
   const lines = [`# ${title} · 笔记`, ''];
   for (const n of notes) {
     lines.push(`> ${n.quote.replace(/\n/g, '\n> ')}`);
-    lines.push(`> — p.${n.pageIndex + 1}`, '');
+    lines.push(`> — p.${n.pageIndex + 1}${n.layer === 'translated' ? '（译文）' : ''}`, '');
     if (n.translation) lines.push(`**译文**：${n.translation}`, '');
     if (n.comment) lines.push(n.comment, '');
     lines.push('---', '');

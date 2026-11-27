@@ -92,11 +92,14 @@ export interface NRect {
 }
 
 export type HighlightColor = 'yellow' | 'green' | 'blue' | 'pink' | 'purple';
+export type InkTarget = 'original' | 'translated';
 
 export interface NoteRecord {
   id: string;
   docId: string;
   pageIndex: number;
+  /** Which page layer the highlight belongs to (omitted = 'original' for backwards compatibility). */
+  layer?: InkTarget;
   rects: NRect[];
   quote: string;
   color: HighlightColor;
@@ -117,7 +120,6 @@ export interface ChatRecord {
 /** Normalized point [x (0..1), y (0..1), pressure (0..1)] for Apple Pencil / stylus ink. */
 export type InkPoint = [number, number, number];
 export type InkKind = 'pen' | 'highlighter';
-export type InkTarget = 'original' | 'translated';
 
 export interface InkStroke {
   id: string;

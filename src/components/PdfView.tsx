@@ -1,6 +1,6 @@
 import { useLiveQuery } from 'dexie-react-hooks';
 import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { db, type InkStroke, type NoteRecord, type NRect } from '../db/db';
+import { db, type InkStroke, type InkTarget, type NoteRecord } from '../db/db';
 import { openPdf, pdfjs, sharedWorker, type PDFDocumentProxy } from '../pdf/loader';
 import { hydratePageFromCache, pageParagraphs, runFullText } from '../services/fulltext';
 import type { Paragraph } from '../pdf/types';
@@ -8,6 +8,7 @@ import { useReader } from '../store/reader';
 import { useSettings } from '../store/settings';
 import { cleanSelectedText } from '../lib/text';
 import { filterPageInks } from '../lib/ink';
+import { filterPageNotes, resolveSelectionTarget } from '../lib/selection';
 import { InkLayer } from './InkLayer';
 
 interface Size {
@@ -28,6 +29,7 @@ export function PdfView() {
   const scrollTarget = useReader((s) => s.scrollTarget);
   const containerRef = useRef<HTMLDivElement>(null);
   const pageRefs = useRef<(HTMLDivElement | null)[]>([]);
+  const transPageRefs = useRef<(HTMLDivElement | null)[]>([]);
   /** one row per page (original and/or translation) — used for scrolling and page tracking */
   const rowRefs = useRef<(HTMLDivElement | null)[]>([]);
   const viewMode = useReader((s) => s.viewMode);
@@ -198,38 +200,26 @@ export function PdfView() {
         return;
       }
       const range = sel.getRangeAt(0);
-      const clientRects = [...range.getClientRects()].filter((r) => r.width > 1 && r.height > 1);
-      // Assign rects to the page that contains their centre; keep the page with the most rects.
-      const byPage = new Map<number, NRect[]>();
-      for (const r of clientRects) {
-        const cx = r.left + r.width / 2;
-        const cy = r.top + r.height / 2;
-        pageRefs.current.forEach((el, i) => {
-          if (!el) return;
-          const b = el.getBoundingClientRect();
-          if (cx >= b.left && cx <= b.right && cy >= b.top && cy <= b.bottom) {
-            const arr = byPage.get(i) ?? [];
-            arr.push({ x: (r.left - b.left) / b.width, y: (r.top - b.top) / b.height, w: r.width / b.width, h: r.height / b.height });
-            byPage.set(i, arr);
-          }
-        });
-      }
-      if (!byPage.size) {
+      const clientRects = [...range.getClientRects()];
+      const origBoxes = pageRefs.current.map((el) => (el?.isConnected ? el.getBoundingClientRect() : null));
+      const transBoxes = transPageRefs.current.map((el) => (el?.isConnected ? el.getBoundingClientRect() : null));
+      const target = resolveSelectionTarget(clientRects, origBoxes, transBoxes);
+      if (!target) {
         setSelection(null);
         return;
       }
-      const [pageIndex, rects] = [...byPage.entries()].sort((a, b) => b[1].length - a[1].length)[0];
-      const merged = mergeRects(rects);
+      const { pageIndex, layer, rects: merged, multiPage } = target;
       const box = range.getBoundingClientRect();
       setSelection({
         text,
         pageIndex,
+        layer,
         rects: merged,
-        multiPage: byPage.size > 1,
+        multiPage,
         anchor: { x: box.left + box.width / 2, y: box.top, bottom: box.bottom },
       });
       if (triggerAuto && useSettings.getState().selectionAction === 'auto-translate') {
-        useReader.getState().startJob(text, 'translate', pageIndex, merged);
+        useReader.getState().startJob(text, 'translate', pageIndex, merged, layer);
       }
     },
     [setSelection],
@@ -293,18 +283,22 @@ export function PdfView() {
                 pdf={pdf}
                 docId={docId}
                 container={containerRef}
-                notes={notes?.filter((n) => n.pageIndex === i)}
+                notes={filterPageNotes(notes, i, 'original')}
                 inks={filterPageInks(inks, i, 'original')}
               />
             )}
             {viewMode !== 'original' && (
               <TransPageView
+                ref={(el) => {
+                  transPageRefs.current[i] = el;
+                }}
                 index={i}
                 size={sz}
                 scale={scale}
                 pdf={pdf}
                 docId={docId}
                 container={containerRef}
+                notes={filterPageNotes(notes, i, 'translated')}
                 inks={filterPageInks(inks, i, 'translated')}
               />
             )}
@@ -313,24 +307,6 @@ export function PdfView() {
       </div>
     </div>
   );
-}
-
-/** Merge rects on the same line that touch/overlap (text layer produces one per span). */
-function mergeRects(rects: NRect[]): NRect[] {
-  const sorted = [...rects].sort((a, b) => a.y - b.y || a.x - b.x);
-  const out: NRect[] = [];
-  for (const r of sorted) {
-    const last = out[out.length - 1];
-    if (last && Math.abs(last.y - r.y) < last.h * 0.5 && r.x <= last.x + last.w + 0.01) {
-      const x2 = Math.max(last.x + last.w, r.x + r.w);
-      const y2 = Math.max(last.y + last.h, r.y + r.h);
-      last.x = Math.min(last.x, r.x);
-      last.y = Math.min(last.y, r.y);
-      last.w = x2 - last.x;
-      last.h = y2 - last.y;
-    } else out.push({ ...r });
-  }
-  return out;
 }
 
 interface PageProps {
@@ -460,7 +436,7 @@ const PageView = memo(function PageView({ index, size, scale, pdf, docId, contai
           )}
         </div>
       )}
-      <PinnedSelectionLayer index={index} />
+      <PinnedSelectionLayer index={index} layer="original" />
       <div ref={textRef} />
       <InkLayer docId={docId} pageIndex={index} layer="original" width={w} height={h} scale={scale} strokes={inks} />
       {visible && <ParagraphLayer pdf={pdf} docId={docId} index={index} scale={scale} />}
@@ -469,8 +445,10 @@ const PageView = memo(function PageView({ index, size, scale, pdf, docId, contai
 });
 
 /** Keeps the selected text visibly highlighted on the PDF while reading its translation / explanation / chat reply. */
-function PinnedSelectionLayer({ index }: { index: number }) {
-  const pin = useReader((s) => (s.pinnedSelection?.pageIndex === index ? s.pinnedSelection : null));
+function PinnedSelectionLayer({ index, layer }: { index: number; layer: InkTarget }) {
+  const pin = useReader((s) =>
+    s.pinnedSelection?.pageIndex === index && (s.pinnedSelection.layer ?? 'original') === layer ? s.pinnedSelection : null,
+  );
   if (!pin?.rects.length) return null;
   return (
     <div className="hl-layer sel-pin-layer">
@@ -547,7 +525,11 @@ function drawPage(page: PageProxy, scale: number, canvasHolder: HTMLElement, tex
     fresh.className = 'textLayer';
     textLayer = new pdfjs.TextLayer({ textContentSource: page.streamTextContent(), container: fresh, viewport: vp });
     await textLayer.render();
-    if (!cancelled) textHolder.replaceChildren(fresh);
+    if (cancelled) return;
+    const end = document.createElement('div');
+    end.className = 'endOfContent';
+    fresh.append(end);
+    textHolder.replaceChildren(fresh);
   })().catch((e) => !cancelled && console.error('draw page', e));
   return () => {
     cancelled = true;
@@ -564,17 +546,11 @@ const TransPageView = memo(function TransPageView({
   pdf,
   docId,
   container,
+  notes,
   inks,
-}: {
-  index: number;
-  size: Size;
-  scale: number;
-  pdf: PDFDocumentProxy;
-  docId: string;
-  container: React.RefObject<HTMLDivElement | null>;
-  inks?: InkStroke[];
-}) {
-  const holderRef = useRef<HTMLDivElement>(null);
+  ref,
+}: PageProps) {
+  const holderRef = useRef<HTMLDivElement | null>(null);
   const canvasHolder = useRef<HTMLDivElement>(null);
   const textRef = useRef<HTMLDivElement>(null);
   const [visible, setVisible] = useState(false);
@@ -644,9 +620,15 @@ const TransPageView = memo(function TransPageView({
       </>
     );
 
+  const setRefs = (el: HTMLDivElement | null) => {
+    holderRef.current = el;
+    if (typeof ref === 'function') ref(el);
+    else if (ref) (ref as React.RefObject<HTMLDivElement | null>).current = el;
+  };
+
   return (
     <div
-      ref={holderRef}
+      ref={setRefs}
       className="page trans"
       data-trans-page={index}
       style={
@@ -661,6 +643,20 @@ const TransPageView = memo(function TransPageView({
       }
     >
       <div ref={canvasHolder} />
+      {notes && notes.length > 0 && (
+        <div className="hl-layer">
+          {notes.flatMap((n) =>
+            n.rects.map((r, j) => (
+              <div
+                key={`${n.id}-${j}`}
+                className={`hl ${n.color}`}
+                style={{ left: `${r.x * 100}%`, top: `${r.y * 100}%`, width: `${r.w * 100}%`, height: `${r.h * 100}%` }}
+              />
+            )),
+          )}
+        </div>
+      )}
+      <PinnedSelectionLayer index={index} layer="translated" />
       <div ref={textRef} />
       <InkLayer docId={docId} pageIndex={index} layer="translated" disabled={!bytes && !showOriginal} width={w} height={h} scale={scale} strokes={inks} />
       {(bytes || showOriginal) && !rendered && <div className="page-loading">{index + 1}</div>}

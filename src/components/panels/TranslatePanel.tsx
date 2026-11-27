@@ -122,8 +122,11 @@ function EntryView({ entry, compact, onRetry }: { entry: Entry; compact?: boolea
   const locate = () => {
     if (entry.job.pageIndex === undefined) return;
     const st = useReader.getState();
+    const layer = entry.job.layer ?? 'original';
+    if (layer === 'translated' && st.viewMode === 'original') st.setViewMode('dual');
+    else if (layer === 'original' && st.viewMode === 'translated') st.setViewMode('dual');
     if (entry.job.rects?.length) {
-      st.setPinnedSelection({ pageIndex: entry.job.pageIndex, rects: entry.job.rects });
+      st.setPinnedSelection({ pageIndex: entry.job.pageIndex, rects: entry.job.rects, layer: entry.job.layer });
     }
     st.scrollTo(entry.job.pageIndex);
   };

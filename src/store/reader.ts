@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import type { PDFDocumentProxy } from '../pdf/loader';
-import type { NRect } from '../db/db';
+import type { InkTarget, NRect } from '../db/db';
 import type { ReaderSnapshot } from './tabs';
 
 export type SideTab = 'translate' | 'parallel' | 'chat' | 'notes' | 'glossary';
@@ -9,6 +9,7 @@ export type InkTool = 'none' | 'pen' | 'highlighter' | 'eraser';
 export interface SelectionInfo {
   text: string;
   pageIndex: number;
+  layer?: InkTarget;
   rects: NRect[];
   /** Selection spans pages — highlight would only cover one page, so it's disabled. */
   multiPage?: boolean;
@@ -22,11 +23,13 @@ export interface TranslateJob {
   text: string;
   mode: 'translate' | 'explain';
   pageIndex?: number;
+  layer?: InkTarget;
   rects?: NRect[];
 }
 
 export interface PinnedSelection {
   pageIndex: number;
+  layer?: InkTarget;
   rects: NRect[];
 }
 
@@ -106,7 +109,7 @@ interface ReaderStore {
   toggleSide: () => void;
   setSelection: (s: SelectionInfo | null) => void;
   setPinnedSelection: (p: PinnedSelection | null) => void;
-  startJob: (text: string, mode: TranslateJob['mode'], pageIndex?: number, rects?: NRect[]) => void;
+  startJob: (text: string, mode: TranslateJob['mode'], pageIndex?: number, rects?: NRect[], layer?: InkTarget) => void;
   setFocusParagraph: (f: ReaderStore['focusParagraph']) => void;
   scrollTo: (pageIndex: number, y?: number) => void;
   setParaState: (id: string, s: ParaState) => void;
@@ -207,12 +210,12 @@ export const useReader = create<ReaderStore>()((set) => ({
   toggleSide: () => set((s) => ({ sideOpen: !s.sideOpen })),
   setSelection: (selection) => set({ selection }),
   setPinnedSelection: (pinnedSelection) => set({ pinnedSelection }),
-  startJob: (text, mode, pageIndex, rects) =>
+  startJob: (text, mode, pageIndex, rects, layer) =>
     set((s) => ({
-      job: { id: ++jobSeq, text, mode, pageIndex, rects },
+      job: { id: ++jobSeq, text, mode, pageIndex, rects, layer },
       sideTab: 'translate',
       sideOpen: true,
-      pinnedSelection: pageIndex !== undefined && rects?.length ? { pageIndex, rects } : s.pinnedSelection,
+      pinnedSelection: pageIndex !== undefined && rects?.length ? { pageIndex, rects, layer } : s.pinnedSelection,
     })),
   setFocusParagraph: (focusParagraph) => set({ focusParagraph }),
   scrollTo: (pageIndex, y) => set({ scrollTarget: { pageIndex, y, nonce: ++scrollSeq } }),
