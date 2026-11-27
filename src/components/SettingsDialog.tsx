@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { create } from 'zustand';
 import { desktop, type LanShareStatus } from '../lib/desktop';
+import { usePwaInstall } from '../lib/pwa';
 import { hasWebCryptoSubtle } from '../lib/sha256';
 import { db, uid } from '../db/db';
 import { exportLibrary, importLibrary } from '../library/backup';
@@ -1145,7 +1146,7 @@ function LanShareCard({
             </span>
           </div>
           <div className="hint" style={{ marginTop: 2 }}>
-            开启后本机直接提供网页阅读、多端同步与跨域代理，同一 Wi-Fi 下 iPad 打开地址即可阅读并同步。
+            开启后本机直接提供网页阅读、多端同步与跨域代理，同一 Wi-Fi 下 iPad、安卓平板或手机打开地址即可阅读并同步。
           </div>
         </div>
         <button className={`btn${status?.enabled ? '' : ' primary'}`} disabled={busy || !status} onClick={() => void toggle()}>
@@ -1186,7 +1187,7 @@ function LanShareCard({
       {status?.running && (
         <div style={{ marginTop: 10 }}>
           <div className="hint" style={{ marginBottom: 4, fontWeight: 500, color: 'var(--fg-muted)' }}>
-            iPad / 手机 Safari 打开以下局域网地址（同一 Wi-Fi）：
+            iPad Safari / 安卓浏览器打开以下局域网地址（同一 Wi-Fi）：
           </div>
           {status.urls.length > 0 ? (
             status.urls.map((u, idx) => (
@@ -1234,6 +1235,8 @@ function LanShareCard({
 function SyncSection({ onOpenSection }: { onOpenSection: (s: SettingsSection) => void }) {
   const sync = useSync();
   const webCryptoOk = hasWebCryptoSubtle();
+  const canInstallPwa = usePwaInstall((s) => s.canInstall);
+  const promptInstallPwa = usePwaInstall((s) => s.promptInstall);
   const hasProviderDraft = useSettingsDraft((s) => !!s.editingProvider);
   const proxyToken = useSettings((s) => s.proxyToken);
   const draft = useSettingsDraft((s) => s.syncDraft);
@@ -1346,15 +1349,22 @@ function SyncSection({ onOpenSection }: { onOpenSection: (s: SettingsSection) =>
         </label>
 
         <div className="hint" style={{ margin: '8px 0 12px', lineHeight: 1.6 }}>
-          同步内容包括：文献题录、PDF 原文（SHA-256 去重）、多级分类、彩色标签、阅读进度、高亮笔记、术语表、AI 对话与翻译缓存。网页版、Windows 桌面端与 iPadOS 平板登录同一账号即可实时互通。
+          同步内容包括：文献题录、PDF 原文（SHA-256 去重）、多级分类、彩色标签、阅读进度、高亮笔记、双层手写笔迹、术语表、AI 对话与翻译缓存。网页版、Windows 桌面端、iPadOS 与安卓平板/手机登录同一账号即可实时互通。
           {!desktop() && proxyToken && '（已自动同步该服务器的中转代理地址与令牌，网页版配置 API 时无需手动填写代理。）'}
         </div>
 
         <div className="sync-card" style={{ marginBottom: 14, fontSize: 12.5, lineHeight: 1.6 }}>
-          <div style={{ fontWeight: 600, marginBottom: 2 }}>在 iPadOS 平板上使用（原生全屏 + 自动同步）</div>
+          <div className="row" style={{ marginBottom: 4, gap: 8 }}>
+            <div style={{ fontWeight: 600 }}>在 iPadOS / 安卓平板与手机上使用（全屏 App 模式 + 手写笔支持）</div>
+            {canInstallPwa && (
+              <button className="btn sm primary" style={{ marginLeft: 'auto' }} onClick={() => void promptInstallPwa()}>
+                一键安装为 App
+              </button>
+            )}
+          </div>
           <div className="hint">
-            1. 在 iPad Safari 打开 <code>{sync.serverUrl || '你的 PaperBridge 网址'}</code>，点击顶部「分享」→「添加到主屏幕」即可像原生 App 一样全屏阅读。<br />
-            2. 在 iPad 上打开「设置 → 云同步」登录同一个账号，即可与电脑实时同步全部文献、PDF、笔记、阅读进度与加密 API 配置。
+            1. <strong>安卓平板/手机</strong>：用 Chrome / Edge 打开 <code>{sync.serverUrl || '你的 PaperBridge 网址'}</code>，点击浏览器菜单「安装应用 / 添加到主屏幕」即可作为独立全屏 App 运行（原生支持三星 S-Pen / 华为 M-Pencil / 小米笔压感、侧键橡皮与防误触）。<br />
+            2. <strong>iPadOS</strong>：用 Safari 打开后点击「分享 → 添加到主屏幕」，登录同一账号即可实时同步全部文献、PDF、双层手写与配置。
           </div>
         </div>
 
@@ -1381,9 +1391,9 @@ function SyncSection({ onOpenSection }: { onOpenSection: (s: SettingsSection) =>
     <>
       <LanShareCard currentServerUrl={serverInput} loggedInUser="" onUseLocalServer={useLocalLanServer} />
 
-      <div style={{ fontWeight: 600, marginBottom: 4 }}>网页 · 电脑 · iPadOS 多端云同步</div>
+      <div style={{ fontWeight: 600, marginBottom: 4 }}>网页 · 电脑 · iPadOS · 安卓平板/手机 多端云同步</div>
       <div className="hint" style={{ marginBottom: 14, lineHeight: 1.6 }}>
-        在网页版、Windows 桌面客户端和 iPadOS 平板（Safari 或「添加到主屏幕」）登录同一个账号，即可自动共享全部文献、PDF、多级分类、彩色标签、笔记、阅读进度与加密后的 API 配置。
+        在网页版、Windows 桌面客户端、iPadOS 与安卓平板/手机登录同一个账号，即可自动共享全部文献、PDF、多级分类、彩色标签、双层手写笔记、阅读进度与加密后的 API 配置。
       </div>
 
       <div className="field">

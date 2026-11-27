@@ -25,21 +25,26 @@ export const InkLayer = memo(function InkLayer({ docId, pageIndex, layer = 'orig
 
   const svgRef = useRef<SVGSVGElement>(null);
   const activePointer = useRef<number | null>(null);
+  const activePenRef = useRef(false);
+  const erasingByStylusBtnRef = useRef(false);
   const draftRef = useRef<InkPoint[]>([]);
   const erasedRef = useRef<Set<string>>(new Set());
   const [draft, setDraft] = useState<InkPoint[] | null>(null);
 
   const interactive = !disabled && inkTool !== 'none';
 
-  // iPadOS Safari palm rejection:
-  // Only preventDefault on touchstart/touchmove for Apple Pencil (`touchType === 'stylus'`) when
-  // `pencilOnly` is on, so resting palms and fingers still scroll & pinch-zoom natively at 120Hz!
+  // Cross-platform stylus palm rejection (iPadOS Apple Pencil + Android S-Pen / M-Pencil / Xiaomi Pen):
+  // - Safari reports `touch.touchType === 'stylus'` on TouchEvent.
+  // - Android Chrome/Edge fires `pointerdown` (`pointerType === 'pen'`) right before `touchstart`,
+  //   setting `activePenRef.current = true` so we preventDefault ONLY for stylus touches while
+  //   fingers and resting palms keep smooth native scrolling & two-finger pinch-zoom!
   useEffect(() => {
     const el = svgRef.current;
     if (!el || !interactive) return;
     const guardTouch = (e: TouchEvent) => {
       if (pencilOnly) {
-        const hasStylus = Array.from(e.touches).some((t) => (t as SafariTouch).touchType === 'stylus');
+        const hasStylus =
+          activePenRef.current || Array.from(e.touches).some((t) => (t as SafariTouch).touchType === 'stylus');
         if (hasStylus) e.preventDefault();
         return;
       }
@@ -85,13 +90,17 @@ export const InkLayer = memo(function InkLayer({ docId, pageIndex, layer = 'orig
 
     e.stopPropagation();
     activePointer.current = e.pointerId;
+    activePenRef.current = e.pointerType === 'pen';
+    // Support Android S-Pen / stylus side eraser button & tail eraser (`button === 5` or `buttons & 32`)
+    const stylusEraser = e.pointerType === 'pen' && (e.button === 5 || (e.buttons & 32) !== 0);
+    erasingByStylusBtnRef.current = stylusEraser;
     try {
       e.currentTarget.setPointerCapture(e.pointerId);
     } catch {
       /* ignore capture failure */
     }
 
-    if (inkTool === 'eraser') {
+    if (inkTool === 'eraser' || stylusEraser) {
       erasedRef.current = new Set();
       eraseAt(pt[0], pt[1]);
       return;
@@ -107,7 +116,7 @@ export const InkLayer = memo(function InkLayer({ docId, pageIndex, layer = 'orig
     if (activePointer.current !== e.pointerId) return;
     const events = e.nativeEvent.getCoalescedEvents?.() ?? [e.nativeEvent];
 
-    if (inkTool === 'eraser') {
+    if (inkTool === 'eraser' || erasingByStylusBtnRef.current) {
       for (const ev of events) {
         const pt = toNorm(ev.clientX, ev.clientY);
         if (pt) eraseAt(pt[0], pt[1]);
@@ -131,12 +140,15 @@ export const InkLayer = memo(function InkLayer({ docId, pageIndex, layer = 'orig
   const finishStroke = (e: React.PointerEvent<SVGSVGElement>) => {
     if (activePointer.current !== e.pointerId) return;
     activePointer.current = null;
+    activePenRef.current = false;
+    const wasStylusEraser = erasingByStylusBtnRef.current;
+    erasingByStylusBtnRef.current = false;
     try {
       e.currentTarget.releasePointerCapture(e.pointerId);
     } catch {
       /* ignore */
     }
-    if (inkTool === 'eraser') {
+    if (inkTool === 'eraser' || wasStylusEraser) {
       erasedRef.current.clear();
       return;
     }

@@ -2514,7 +2514,11 @@ a {
   color: var(--fg);
 }
 
-/* ---------- iPadOS / Tablet / PWA & Touch Adaptations ---------- */
+/* ---------- iPadOS / Android Tablet & Phone / PWA & Touch Adaptations ---------- */
+html,
+body {
+  overscroll-behavior-y: none;
+}
 @supports (height: 100dvh) {
   html,
   body,
@@ -2706,11 +2710,100 @@ a {
   }
 }
 
-/* iPadOS / iOS standalone PWA: ensure crisp unclipped top bar clear of system status bar & Liquid Glass top scrim */
+/* iPadOS / Android standalone PWA: ensure crisp unclipped top bar clear of system status bar & Liquid Glass top scrim */
 @media (display-mode: standalone) and (pointer: coarse) {
   .tabbar {
     padding-top: calc(env(safe-area-inset-top, 0px) + 6px);
     height: calc(48px + env(safe-area-inset-top, 0px));
+  }
+}
+
+/* Android phones & narrow mobile viewports (<= 640px) */
+@media (max-width: 640px) {
+  .hide-phone {
+    display: none !important;
+  }
+  .tabbar {
+    padding: 0 6px;
+    gap: 3px;
+  }
+  .tabbar-brand {
+    margin-right: 0;
+  }
+  .wtab.pinned {
+    padding: 0 8px;
+  }
+  .wtab.pinned .wtab-label {
+    font-size: 12px;
+  }
+  .tabbar-actions {
+    gap: 2px;
+  }
+  .lib-toolbar {
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 6px 8px;
+  }
+  .lib-toolbar .spacer {
+    display: none;
+  }
+  .lib-toolbar .search {
+    order: 10;
+    flex: 1 1 100%;
+    max-width: none;
+    min-width: 0;
+  }
+  .filter-strip {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+    padding: 5px 8px;
+  }
+  .filter-strip::-webkit-scrollbar {
+    display: none;
+  }
+  .filter-pill {
+    flex: none;
+  }
+  .toolbar {
+    gap: 3px;
+    padding: 4px 6px;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .toolbar::-webkit-scrollbar {
+    display: none;
+  }
+  .toolbar .sep {
+    display: none;
+  }
+  .toolbar > * {
+    flex: none;
+  }
+  .side {
+    width: 100vw !important;
+    max-width: 100vw;
+    left: 0;
+    right: 0;
+  }
+  .lib-detail {
+    width: 100vw !important;
+    max-width: 100vw;
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  .sel-toolbar {
+    max-width: calc(100vw - 16px);
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+  .overlay {
+    padding: 8px;
+  }
+  .dialog.settings-dialog {
+    height: min(760px, 94dvh);
+  }
+  .lan-url-row {
+    flex-wrap: wrap;
   }
 }
 

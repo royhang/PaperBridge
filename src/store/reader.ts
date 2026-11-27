@@ -143,7 +143,12 @@ export const useReader = create<ReaderStore>()((set) => ({
   penColor: '#e11d48',
   hlColor: '#facc15',
   penWidth: 2.2,
-  pencilOnly: typeof window !== 'undefined' && !!window.matchMedia?.('(pointer: coarse)').matches,
+  // Default stylus palm rejection ON for tablets (iPad / Android tablets >= 600px short edge),
+  // OFF for phones so Android/iOS phone users can annotate directly with their finger.
+  pencilOnly:
+    typeof window !== 'undefined' &&
+    !!window.matchMedia?.('(pointer: coarse)').matches &&
+    Math.min(window.screen?.width || window.innerWidth, window.screen?.height || window.innerHeight) >= 600,
   focusMode: false,
 
   setInkTool: (inkTool) => set({ inkTool, selection: null }),

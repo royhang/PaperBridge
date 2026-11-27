@@ -1,7 +1,7 @@
 {
   "name": "PaperBridge 文献阅读翻译",
   "short_name": "PaperBridge",
-  "description": "开源学术文献阅读、划词翻译、全文对照与多端云同步工具",
+  "description": "开源学术文献阅读、保版式全文对照、手写批注与多端云同步工具，支持电脑、iPad 与安卓平板/手机",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
@@ -20,7 +20,13 @@
       "src": "./icon-512.png",
       "sizes": "512x512",
       "type": "image/png",
-      "purpose": "any maskable"
+      "purpose": "any"
+    },
+    {
+      "src": "./icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
     }
   ]
 }

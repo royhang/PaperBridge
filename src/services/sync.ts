@@ -86,6 +86,10 @@ function deviceLabel(): string {
       (window.matchMedia?.('(display-mode: standalone)').matches || (navigator as { standalone?: boolean }).standalone === true);
     if (isIpad) return isStandalone ? 'iPadOS (App)' : 'iPadOS (Safari)';
     if (/iPhone|iPod/i.test(ua)) return isStandalone ? 'iOS (App)' : 'iOS (Safari)';
+    if (/Android/i.test(ua)) {
+      const kind = /Mobile/i.test(ua) ? 'Android Phone' : 'Android Tablet';
+      return isStandalone ? `${kind} (App)` : `${kind} (Browser)`;
+    }
     return `Web (${navigator.platform || 'Browser'})`;
   }
   return 'PaperBridge';

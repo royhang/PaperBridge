@@ -263,13 +263,13 @@ function Toolbar({ active }: { active: boolean }) {
         <Icon name="down" size={16} />
       </button>
       <div className="sep" />
-      <button className="icon-btn" title="缩小 (Ctrl -)" onClick={() => setScale(scale / 1.1)}>
+      <button className="icon-btn hide-phone" title="缩小 (Ctrl -)" onClick={() => setScale(scale / 1.1)}>
         <Icon name="minus" size={16} />
       </button>
       <button className="btn ghost sm hide-sm" title="重置缩放 (130%)" onClick={() => setScale(1.3)} style={{ minWidth: 48 }}>
         {Math.round(scale * 100)}%
       </button>
-      <button className="icon-btn" title="放大 (Ctrl +)" onClick={() => setScale(scale * 1.1)}>
+      <button className="icon-btn hide-phone" title="放大 (Ctrl +)" onClick={() => setScale(scale * 1.1)}>
         <Icon name="plus" size={16} />
       </button>
       <button className="icon-btn hide-sm" title="适应页面宽度" onClick={() => void fitWidth()}>
@@ -303,7 +303,7 @@ function Toolbar({ active }: { active: boolean }) {
       </div>
       <button
         className={`icon-btn${inkTool !== 'none' ? ' active' : ''}`}
-        title="手写批注（支持 Apple Pencil 压感与防手掌误触）"
+        title="手写批注（支持 Apple Pencil / 三星 S-Pen / 华为 M-Pencil / 小米笔压感与防误触）"
         onClick={() => setInkTool(inkTool === 'none' ? 'pen' : 'none')}
       >
         <Icon name="edit" size={16} />
@@ -464,10 +464,10 @@ function InkToolbar({ docId }: { docId: string }) {
       <span className="filter-sep" />
       <button
         className={`filter-pill${pencilOnly ? ' active' : ''}`}
-        title="开启后仅 Apple Pencil 落笔书写，手掌和手指可自由翻页缩放（防误触）"
+        title="开启后仅手写笔（Apple Pencil / S-Pen / M-Pencil / 小米笔）落笔书写，手掌和手指可自由翻页缩放（防误触）"
         onClick={() => setPencilOnly(!pencilOnly)}
       >
-        {pencilOnly ? '✓ 仅 Pencil（防误触）' : '手指/鼠标可写'}
+        {pencilOnly ? '✓ 仅手写笔（防误触）' : '手指/鼠标可写'}
       </button>
 
       <div className="spacer" />
@@ -515,15 +515,16 @@ function SelectionToolbar() {
     done();
   };
 
-  // On touch / iPadOS Safari, place the toolbar BELOW the selection so it never collides with iOS's native Copy/Look Up bar above.
+  // On touch (iPadOS / Android), place the toolbar BELOW the selection so it never collides with the native Copy/Search bar above.
   const isTouch = typeof window !== 'undefined' && !!window.matchMedia?.('(pointer: coarse)').matches;
   const placeBelow = isTouch && sel.anchor.bottom !== undefined && sel.anchor.bottom < window.innerHeight - 96;
   const top = placeBelow ? sel.anchor.bottom! + 12 : Math.max(88, sel.anchor.y);
+  const left = window.innerWidth < 460 ? window.innerWidth / 2 : Math.min(Math.max(sel.anchor.x, 168), window.innerWidth - 168);
   return (
     <div
       ref={ref}
       className={`sel-toolbar${placeBelow ? ' below' : ''}`}
-      style={{ left: Math.min(Math.max(sel.anchor.x, 168), window.innerWidth - 168), top }}
+      style={{ left, top }}
       onMouseDown={(e) => e.preventDefault()}
       onPointerDown={(e) => e.preventDefault()}
       onTouchStart={(e) => e.stopPropagation()}
