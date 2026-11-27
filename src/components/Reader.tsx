@@ -313,19 +313,26 @@ function Toolbar({ active }: { active: boolean }) {
         <Icon name="edit" size={16} />
       </button>
       <button
-        className={`btn ghost sm pdf-paper-btn${pdfTheme !== 'auto' ? ' active' : ''}`}
+        className={`btn ghost sm pdf-paper-btn${pdfTheme !== 'auto' ? ' active' : ''}${resolvedPdf === 'parchment' ? ' parchment' : ''}`}
         title={
           resolvedPdf === 'original'
-            ? 'PDF 纸色：原始白底（点击切换为柔光暖纸）'
-            : resolvedPdf === 'dim'
-              ? 'PDF 纸色：柔光暖纸（保留照片原色，点击切换为暗夜反色）'
-              : 'PDF 纸色：暗夜反色（点击切换为原始白底）'
+            ? 'PDF 纸色：原始白底（点击切换为羊皮纸模式）'
+            : resolvedPdf === 'parchment'
+              ? 'PDF 纸色：羊皮纸模式（复古护眼纸感，点击切换为柔光护眼）'
+              : resolvedPdf === 'dim'
+                ? 'PDF 纸色：柔光护眼（保留照片原色，点击切换为暗夜反色）'
+                : 'PDF 纸色：暗夜反色（点击切换为原始白底）'
         }
         aria-label="切换 PDF 纸色"
         onClick={() => setSettings({ pdfTheme: nextPdfTheme(pdfTheme, isDark) })}
       >
-        <Icon name={resolvedPdf === 'original' ? 'sun' : resolvedPdf === 'dim' ? 'half' : 'moon'} size={14} />
-        <span className="hide-sm">{resolvedPdf === 'original' ? '白底' : resolvedPdf === 'dim' ? '暖纸' : '暗夜'}</span>
+        <Icon
+          name={resolvedPdf === 'original' ? 'sun' : resolvedPdf === 'parchment' ? 'book' : resolvedPdf === 'dim' ? 'half' : 'moon'}
+          size={14}
+        />
+        <span className="hide-sm">
+          {resolvedPdf === 'original' ? '白底' : resolvedPdf === 'parchment' ? '羊皮纸' : resolvedPdf === 'dim' ? '柔光' : '暗夜'}
+        </span>
       </button>
       <button
         className={`icon-btn${focusMode ? ' active' : ''}`}

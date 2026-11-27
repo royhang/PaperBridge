@@ -2942,6 +2942,47 @@ body {
   color: var(--accent);
   background: var(--accent-soft);
 }
+.pdf-paper-btn.parchment {
+  color: #9a6721;
+  background: rgba(183, 121, 31, 0.14);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) .pdf-paper-btn.parchment {
+    color: #e4b874;
+    background: rgba(228, 184, 116, 0.16);
+  }
+}
+:root[data-theme='dark'] .pdf-paper-btn.parchment {
+  color: #e4b874;
+  background: rgba(228, 184, 116, 0.16);
+}
+/* Parchment / vintage warm paper mode */
+:root[data-pdf-theme='parchment'] .viewer {
+  background: #e5d8be;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light'])[data-pdf-theme='parchment'] .viewer {
+    background: #1d1914;
+  }
+}
+:root[data-theme='dark'][data-pdf-theme='parchment'] .viewer {
+  background: #1d1914;
+}
+:root[data-pdf-theme='parchment'] .page {
+  background: #f6e7cd;
+  box-shadow: 0 2px 12px rgba(92, 68, 34, 0.16), 0 0 0 1px rgba(154, 121, 74, 0.22);
+}
+:root[data-pdf-theme='parchment'] .page-canvas {
+  filter: brightness(0.86) sepia(0.38) saturate(1.12) contrast(0.96);
+}
+:root[data-pdf-theme='parchment'] .trans-status {
+  background: repeating-linear-gradient(180deg, #f6e7cd 0 22px, #ecdcbe 22px 23px);
+  color: #745c3c;
+}
+:root[data-pdf-theme='parchment'] .trans-badge {
+  background: rgba(246, 231, 205, 0.94);
+  color: #6b5435;
+}
 :root[data-pdf-theme='dark'] .page {
   background: #1d2026;
   box-shadow: 0 2px 14px rgba(0, 0, 0, 0.55);

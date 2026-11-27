@@ -1677,7 +1677,8 @@ function GeneralSection() {
         <select className="select" value={pdfTheme} onChange={(e) => set({ pdfTheme: e.target.value as typeof pdfTheme })}>
           <option value="auto">跟随主题（深色自动暗夜纸张）</option>
           <option value="original">原始白底</option>
-          <option value="dim">柔光暖纸（保留图片原色）</option>
+          <option value="parchment">羊皮纸（复古护眼纸感）</option>
+          <option value="dim">柔光护眼（保留图片原色）</option>
           <option value="dark">暗夜反色</option>
         </select>
       </div>

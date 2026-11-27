@@ -3,7 +3,7 @@ import { persist } from 'zustand/middleware';
 import type { LangCode, ProviderConfig } from '../providers/types';
 
 export type Theme = 'system' | 'light' | 'dark';
-export type PdfTheme = 'auto' | 'original' | 'dim' | 'dark';
+export type PdfTheme = 'auto' | 'original' | 'parchment' | 'dim' | 'dark';
 export type SelectionAction = 'popup' | 'auto-translate' | 'none';
 export type TagColor = 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple';
 
@@ -60,7 +60,7 @@ export interface Settings {
   proxyToken: string;
   selectionAction: SelectionAction;
   theme: Theme;
-  /** PDF page rendering color mode: auto (night-paper in dark mode), original (pure white), dim (warm eye-comfort), dark (inverted night paper). */
+  /** PDF page rendering color mode: auto (night-paper in dark mode), original (pure white), parchment (warm sepia paper), dim (soft eye-comfort), dark (inverted night paper). */
   pdfTheme: PdfTheme;
   /** Max parallel requests during full-text translation (capped at 3). */
   concurrency: number;

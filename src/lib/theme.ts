@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from 'react';
 import type { PdfTheme, Theme } from '../store/settings';
 
-export type ResolvedPdfTheme = 'original' | 'dim' | 'dark';
+export type ResolvedPdfTheme = 'original' | 'parchment' | 'dim' | 'dark';
 
 const DARK_MEDIA_QUERY = '(prefers-color-scheme: dark)';
 
@@ -44,13 +44,13 @@ export function resolvePdfTheme(pdfTheme: PdfTheme, isDark: boolean): ResolvedPd
 }
 
 /**
- * Cycle through the 3 visually distinct PDF paper modes (original -> dim -> dark -> original)
+ * Cycle through the 4 visually distinct PDF paper modes (original -> parchment -> dim -> dark -> original)
  * so every click always produces an immediate visible change, storing 'auto' whenever the target
  * matches the current app theme's natural default.
  */
 export function nextPdfTheme(pdfTheme: PdfTheme, isDark: boolean): PdfTheme {
   const cur = resolvePdfTheme(pdfTheme, isDark);
-  const order: readonly ResolvedPdfTheme[] = ['original', 'dim', 'dark'];
+  const order: readonly ResolvedPdfTheme[] = ['original', 'parchment', 'dim', 'dark'];
   const target = order[(order.indexOf(cur) + 1) % order.length];
   const naturalDefault: ResolvedPdfTheme = isDark ? 'dark' : 'original';
   return target === naturalDefault ? 'auto' : target;

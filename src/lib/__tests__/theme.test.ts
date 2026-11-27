@@ -19,35 +19,43 @@ describe('theme & PDF paper switching helpers', () => {
     expect(toggleAppTheme('light', true)).toBe('dark');
   });
 
-  it('cycles PDF paper theme through 3 distinct visual states with zero dead clicks in light mode', () => {
-    // In light mode: auto (= original) -> dim -> dark -> auto (= original)
+  it('cycles PDF paper theme through 4 distinct visual states (including parchment) with zero dead clicks in light mode', () => {
+    // In light mode: auto (= original) -> parchment -> dim -> dark -> auto (= original)
     expect(resolvePdfTheme('auto', false)).toBe('original');
     const step1 = nextPdfTheme('auto', false);
-    expect(step1).toBe('dim');
-    expect(resolvePdfTheme(step1, false)).toBe('dim');
+    expect(step1).toBe('parchment');
+    expect(resolvePdfTheme(step1, false)).toBe('parchment');
 
     const step2 = nextPdfTheme(step1, false);
-    expect(step2).toBe('dark');
-    expect(resolvePdfTheme(step2, false)).toBe('dark');
+    expect(step2).toBe('dim');
+    expect(resolvePdfTheme(step2, false)).toBe('dim');
 
     const step3 = nextPdfTheme(step2, false);
-    expect(step3).toBe('auto');
-    expect(resolvePdfTheme(step3, false)).toBe('original');
+    expect(step3).toBe('dark');
+    expect(resolvePdfTheme(step3, false)).toBe('dark');
+
+    const step4 = nextPdfTheme(step3, false);
+    expect(step4).toBe('auto');
+    expect(resolvePdfTheme(step4, false)).toBe('original');
   });
 
-  it('cycles PDF paper theme through 3 distinct visual states with zero dead clicks in dark mode', () => {
-    // In dark mode: auto (= dark) -> original -> dim -> auto (= dark)
+  it('cycles PDF paper theme through 4 distinct visual states (including parchment) with zero dead clicks in dark mode', () => {
+    // In dark mode: auto (= dark) -> original -> parchment -> dim -> auto (= dark)
     expect(resolvePdfTheme('auto', true)).toBe('dark');
     const step1 = nextPdfTheme('auto', true);
     expect(step1).toBe('original');
     expect(resolvePdfTheme(step1, true)).toBe('original');
 
     const step2 = nextPdfTheme(step1, true);
-    expect(step2).toBe('dim');
-    expect(resolvePdfTheme(step2, true)).toBe('dim');
+    expect(step2).toBe('parchment');
+    expect(resolvePdfTheme(step2, true)).toBe('parchment');
 
     const step3 = nextPdfTheme(step2, true);
-    expect(step3).toBe('auto');
-    expect(resolvePdfTheme(step3, true)).toBe('dark');
+    expect(step3).toBe('dim');
+    expect(resolvePdfTheme(step3, true)).toBe('dim');
+
+    const step4 = nextPdfTheme(step3, true);
+    expect(step4).toBe('auto');
+    expect(resolvePdfTheme(step4, true)).toBe('dark');
   });
 });
