@@ -91,7 +91,16 @@ export function LibraryPage() {
   const [indexing, setIndexing] = useState<string>('');
   const [ctxMenu, setCtxMenu] = useState<{ doc: DocRecord; x: number; y: number } | null>(null);
   const [renamingDocId, setRenamingDocId] = useState<string | null>(null);
+  const [toast, setToast] = useState<string>('');
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const [drawerOpen, setDrawerOpen] = useState(false);
+
+  const showToast = (msg: string) => {
+    setToast(msg);
+    clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(''), 2400);
+  };
+  useEffect(() => () => clearTimeout(toastTimer.current), []);
   const hasProvider = useSettings((s) => s.providers.length > 0);
   const openDocIds = useMemo(() => new Set(openTabs.map((t) => t.docId)), [openTabs]);
   const docsWithNotes = useMemo(() => new Set((notes ?? []).map((n) => n.docId)), [notes]);
@@ -108,15 +117,19 @@ export function LibraryPage() {
   useEffect(() => {
     if (!ctxMenu) return;
     const close = () => setCtxMenu(null);
+    const onScroll = (e: Event) => {
+      if ((e.target as HTMLElement | null)?.closest?.('.ctx-menu')) return;
+      setCtxMenu(null);
+    };
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setCtxMenu(null);
     window.addEventListener('mousedown', close);
     window.addEventListener('resize', close);
-    window.addEventListener('scroll', close, true);
+    window.addEventListener('scroll', onScroll, true);
     window.addEventListener('keydown', onKey);
     return () => {
       window.removeEventListener('mousedown', close);
       window.removeEventListener('resize', close);
-      window.removeEventListener('scroll', close, true);
+      window.removeEventListener('scroll', onScroll, true);
       window.removeEventListener('keydown', onKey);
     };
   }, [ctxMenu]);
@@ -483,7 +496,9 @@ export function LibraryPage() {
               <span className="spinner" /> {busy || indexing}
             </div>
           )}
-          {lib.checked.length > 0 && <BulkBar docs={shown} collections={collections ?? []} isTrash={isTrash} />}
+          {lib.checked.length > 0 && (
+            <BulkBar docs={shown} collections={collections ?? []} isTrash={isTrash} onNotify={showToast} />
+          )}
 
           {/* Zotero multi-column header (in table mode) */}
           {lib.layout === 'table' && shown.length > 0 && (
@@ -562,9 +577,18 @@ export function LibraryPage() {
           doc={ctxMenu.doc}
           x={ctxMenu.x}
           y={ctxMenu.y}
+          collections={collections ?? []}
+          currentCollectionId={lib.view.kind === 'collection' ? lib.view.id : undefined}
           onRename={() => setRenamingDocId(ctxMenu.doc.id)}
+          onNotify={showToast}
           onClose={() => setCtxMenu(null)}
         />
+      )}
+      {toast && (
+        <div className="lib-toast" role="status">
+          <Icon name="check" size={14} />
+          <span>{toast}</span>
+        </div>
       )}
       {importOpen && (
         <ImportDialog
@@ -889,19 +913,58 @@ function DocContextMenu({
   doc,
   x,
   y,
+  collections,
+  currentCollectionId,
   onRename,
+  onNotify,
   onClose,
 }: {
   doc: DocRecord;
   x: number;
   y: number;
+  collections: Collection[];
+  currentCollectionId?: string;
   onRename: () => void;
+  onNotify: (msg: string) => void;
   onClose: () => void;
 }) {
   const select = useLibrary((s) => s.select);
+  const checked = useLibrary((s) => s.checked);
   const isTrash = !!doc.deletedAt;
+  const targetIds = checked.includes(doc.id) && checked.length > 1 ? checked : [doc.id];
+  const isMulti = targetIds.length > 1;
+  const [copyOpen, setCopyOpen] = useState(false);
+  const [colFilter, setColFilter] = useState('');
+  const [creatingCol, setCreatingCol] = useState(false);
+  const [newColName, setNewColName] = useState('');
+
+  const tree = useMemo(() => flattenCollectionTree(collections), [collections]);
+  const filteredTree = useMemo(() => {
+    const q = colFilter.trim().toLowerCase();
+    if (!q) return tree;
+    return tree.filter(({ col }) => col.name.toLowerCase().includes(q));
+  }, [tree, colFilter]);
+
+  const menuH = isTrash ? 160 : currentCollectionId ? 446 : 414;
   const left = Math.max(8, Math.min(x, window.innerWidth - 220));
-  const top = Math.max(8, Math.min(y, window.innerHeight - (isTrash ? 160 : 376)));
+  const top = Math.max(8, Math.min(y, window.innerHeight - menuH));
+  const flipLeft = left + 208 + 236 > window.innerWidth;
+  const flipUp = top + 280 > window.innerHeight;
+
+  const copyToCol = async (col: Collection) => {
+    await addToCollection(targetIds, col.id);
+    onNotify(isMulti ? `已将 ${targetIds.length} 篇文献复制到「${col.name}」` : `已复制到「${col.name}」`);
+    onClose();
+  };
+
+  const createAndCopy = async () => {
+    const name = newColName.trim();
+    if (!name) return;
+    const created = await createCollection(name);
+    await addToCollection(targetIds, created.id);
+    onNotify(isMulti ? `已新建「${created.name}」并复制 ${targetIds.length} 篇文献` : `已复制到新建分类「${created.name}」`);
+    onClose();
+  };
 
   const copyCite = (style: 'apa' | 'gbt7714') => {
     void navigator.clipboard.writeText(formatCitation(doc.meta, style));
@@ -986,6 +1049,103 @@ function DocContextMenu({
             在后台标签页打开
           </button>
         </>
+      )}
+      <div className="ctx-sep" />
+      <div
+        className="ctx-sub-wrap"
+        onMouseEnter={() => {
+          if (window.innerWidth >= 560) setCopyOpen(true);
+        }}
+        onMouseLeave={() => {
+          if (window.innerWidth >= 560 && !creatingCol && !colFilter) setCopyOpen(false);
+        }}
+      >
+        <button
+          className={`ctx-item ctx-sub-trigger${copyOpen ? ' active' : ''}`}
+          onClick={() => setCopyOpen((v) => !v)}
+        >
+          <span>{isMulti ? `复制到其他分类 (${targetIds.length})` : '复制到其他分类'}</span>
+          <Icon name="next" size={13} />
+        </button>
+        {copyOpen && (
+          <div className={`ctx-submenu${flipLeft ? ' left' : ''}${flipUp ? ' up' : ''}`}>
+            {tree.length > 6 && (
+              <div className="ctx-sub-search">
+                <input
+                  className="input sm"
+                  placeholder="筛选分类…"
+                  value={colFilter}
+                  onChange={(e) => setColFilter(e.target.value)}
+                  onKeyDown={(e) => e.stopPropagation()}
+                />
+              </div>
+            )}
+            <div className="ctx-sub-list">
+              {filteredTree.length === 0 && (
+                <div className="ctx-sub-empty">{tree.length === 0 ? '暂无分类，点击下方新建' : '没有匹配的分类'}</div>
+              )}
+              {filteredTree.map(({ col, depth }) => {
+                const alreadyIn = !isMulti && doc.collectionIds.includes(col.id);
+                return (
+                  <button
+                    key={col.id}
+                    className={`ctx-item ctx-col-item${alreadyIn ? ' checked' : ''}`}
+                    style={{ paddingLeft: 10 + (colFilter.trim() ? 0 : Math.min(depth, 4) * 14) }}
+                    title={alreadyIn ? `已在「${col.name}」中` : `复制到「${col.name}」`}
+                    disabled={alreadyIn}
+                    onClick={() => void copyToCol(col)}
+                  >
+                    <Icon name="folder" size={13} />
+                    <span className="ctx-col-name">{col.name}</span>
+                    {alreadyIn && (
+                      <span className="ctx-col-mark" title="已在此分类中">
+                        <Icon name="check" size={12} />
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+            <div className="ctx-sep" />
+            {creatingCol ? (
+              <div className="ctx-sub-new">
+                <input
+                  className="input sm"
+                  autoFocus
+                  placeholder="新分类名称，回车确认"
+                  value={newColName}
+                  onChange={(e) => setNewColName(e.target.value)}
+                  onKeyDown={(e) => {
+                    e.stopPropagation();
+                    if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+                    if (e.key === 'Enter') void createAndCopy();
+                    if (e.key === 'Escape') {
+                      setCreatingCol(false);
+                      setNewColName('');
+                    }
+                  }}
+                />
+              </div>
+            ) : (
+              <button className="ctx-item ctx-sub-add" onClick={() => setCreatingCol(true)}>
+                <Icon name="plus" size={13} />
+                <span>新建分类并复制…</span>
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+      {currentCollectionId && (
+        <button
+          className="ctx-item"
+          onClick={async () => {
+            await removeFromCollection(targetIds, currentCollectionId);
+            onNotify(isMulti ? `已从当前分类移出 ${targetIds.length} 篇文献` : '已从当前分类移出');
+            onClose();
+          }}
+        >
+          从当前分类移除
+        </button>
       )}
       <div className="ctx-sep" />
       <button
@@ -1671,7 +1831,17 @@ function Sidebar({
   );
 }
 
-function BulkBar({ docs, collections, isTrash }: { docs: DocRecord[]; collections: Collection[]; isTrash: boolean }) {
+function BulkBar({
+  docs,
+  collections,
+  isTrash,
+  onNotify,
+}: {
+  docs: DocRecord[];
+  collections: Collection[];
+  isTrash: boolean;
+  onNotify: (msg: string) => void;
+}) {
   const checked = useLibrary((s) => s.checked);
   const setChecked = useLibrary((s) => s.setChecked);
   const view = useLibrary((s) => s.view);
@@ -1738,10 +1908,15 @@ function BulkBar({ docs, collections, isTrash }: { docs: DocRecord[]; collection
         className="select sm"
         value=""
         onChange={(e) => {
-          if (e.target.value) void addToCollection(checked, e.target.value);
+          const cid = e.target.value;
+          if (!cid) return;
+          const col = collections.find((c) => c.id === cid);
+          void addToCollection(checked, cid).then(() => {
+            if (col) onNotify(`已将 ${checked.length} 篇文献复制到「${col.name}」`);
+          });
         }}
       >
-        <option value="">加入分类…</option>
+        <option value="">复制到分类…</option>
         {tree.map(({ col: c, depth }) => (
           <option key={c.id} value={c.id}>
             {'　'.repeat(depth)}

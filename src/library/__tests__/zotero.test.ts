@@ -2,6 +2,7 @@ import 'fake-indexeddb/auto';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { db, type Collection, type DocRecord } from '../../db/db';
 import {
+  addToCollection,
   createCollection,
   deleteCollection,
   deleteCollectionAndDocs,
@@ -10,6 +11,7 @@ import {
   flattenCollectionTree,
   getDescendantCollectionIds,
   moveCollection,
+  removeFromCollection,
   renameDoc,
   restoreDocs,
   trashDocs,
@@ -146,5 +148,21 @@ describe('Zotero library organization (nested collections, trash, duplicates)', 
     expect(updated?.meta.title).toBe('ReflecTool: Medical Agent');
     expect(updated?.meta.year).toBe(2025);
     expect(updated?.metaSource).toBe('manual');
+  });
+
+  it('copies docs to other collections without removing existing ones and avoids duplicates', async () => {
+    const colA = await createCollection('Folder A');
+    const colB = await createCollection('Folder B');
+    await db.docs.bulkAdd([
+      makeDoc('c1', { collectionIds: [colA.id] }),
+      makeDoc('c2', { collectionIds: [colA.id, colB.id] }),
+    ]);
+
+    await addToCollection(['c1', 'c2'], colB.id);
+    expect((await db.docs.get('c1'))?.collectionIds).toEqual([colA.id, colB.id]);
+    expect((await db.docs.get('c2'))?.collectionIds).toEqual([colA.id, colB.id]);
+
+    await removeFromCollection(['c1'], colA.id);
+    expect((await db.docs.get('c1'))?.collectionIds).toEqual([colB.id]);
   });
 });
